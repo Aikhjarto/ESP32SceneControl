@@ -44,7 +44,7 @@ void setDefaults(Config& cfg) {
     for (int b = 0; b < kMaxPca; ++b) {
         cfg.pca[b] = {b == 0, static_cast<uint32_t>(0x40 + b), 50, 25000000};
     }
-    cfg.button = {pinGpio(34), true, false, 30};
+    cfg.button = {pinGpio(0), true, true, 30};  // BOOT button on DevKit boards
 
     NetConfig& n = cfg.net;
     std::strcpy(n.password, "servoscene");

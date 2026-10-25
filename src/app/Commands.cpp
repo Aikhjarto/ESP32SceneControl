@@ -194,7 +194,7 @@ void setWsTransport(WsSend send, WsBroadcast broadcast) {
 }
 
 void startCommands() {
-    ESP_ERROR_CHECK(uart_driver_install(kUartPort, 1024, 0, 0, nullptr, 0));
+    ESP_ERROR_CHECK(uart_driver_install(kUartPort, 1024, 4096, 0, nullptr, 0));  // TX ring: writers never wait
     gQueue = xQueueCreate(16, sizeof(Request*));
     setBroadcaster(broadcastAll);
     xTaskCreatePinnedToCore(executorTask, "cmd", 6144, nullptr, 5, nullptr, 0);
