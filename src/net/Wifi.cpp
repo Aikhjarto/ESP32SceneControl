@@ -32,7 +32,7 @@ std::string firstClientIp() {
 }
 
 static void onIpAssigned(void*, esp_event_base_t, int32_t, void* data) {
-    auto* e = static_cast<ip_event_ap_staipassigned_t*>(data);
+    auto* e = static_cast<ip_event_assigned_ip_to_client_t*>(data);
     if (!gFirstClient) gFirstClient = e->ip.addr;
     ESP_LOGI(TAG, "client got " IPSTR, IP2STR(&e->ip));
 }
@@ -55,7 +55,7 @@ void startAccessPoint(const NetConfig& cfg) {
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, onWifiEvent, nullptr));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, onIpAssigned, nullptr));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ASSIGNED_IP_TO_CLIENT, onIpAssigned, nullptr));
 
     if (cfg.ssid[0]) {
         gSsid = cfg.ssid;

@@ -7,6 +7,7 @@
 #include "core/Config.h"
 #include "driver/i2c_master.h"
 #include "driver/mcpwm_prelude.h"
+#include "hal/mcpwm_ll.h"  // MCPWM_LL_GET(...): per-chip MCPWM unit counts (ESP-IDF 6)
 #include "out/Pca9685.h"
 #include "soc/soc_caps.h"
 
@@ -36,7 +37,7 @@ public:
     std::string describe(int servo) const;  // e.g. "mcpwm0.3", "ledc-hs.5", "pca0.12"
     int used(HwKind k) const { return k >= HwKind::LedcHs && k <= HwKind::Mcpwm1 ? used_[static_cast<int>(k) - 1] : 0; }
 
-    static constexpr int kMcpwmPerUnit = SOC_MCPWM_OPERATORS_PER_GROUP * SOC_MCPWM_GENERATORS_PER_OPERATOR;
+    static constexpr int kMcpwmPerUnit = MCPWM_LL_GET(OPERATORS_PER_GROUP) * MCPWM_LL_GET(GENERATORS_PER_OPERATOR);
 
     static bool gpioUsableForServo(int gpio);
 

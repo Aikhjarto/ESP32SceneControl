@@ -17,7 +17,7 @@ static const char* TAG = "outputs";
 constexpr int kLedcPerMode = SOC_LEDC_CHANNEL_NUM;
 constexpr int kMcpwmPerUnit = Outputs::kMcpwmPerUnit;
 constexpr int kLedcBits = 16;
-constexpr uint32_t kMcpwmGroupHz = 80000000;  // 160 MHz PLL / default group prescale 2
+constexpr uint32_t kMcpwmGroupHz = 160000000;  // PLL_F160M, default group prescale 1 (ESP-IDF 6)
 
 static int capacity(HwKind k) {
     switch (k) {
@@ -174,7 +174,7 @@ void Outputs::initMcpwm(const Config& cfg, int unit, std::string& log) {
     for (int i = 0; i < kMaxServos; ++i) {
         if (map_[i].kind != kind) continue;
         const int slot = map_[i].ch;
-        const int op = slot / SOC_MCPWM_GENERATORS_PER_OPERATOR;
+        const int op = slot / MCPWM_LL_GET(GENERATORS_PER_OPERATOR);
         if (!u.oper[op]) {
             mcpwm_operator_config_t oc = {};
             oc.group_id = unit;

@@ -41,7 +41,7 @@ At boot, servos are switched on one after another (`$/scene/stagger_ms`) to avoi
 
 ## Build, flash, test
 
-PlatformIO with the ESP-IDF framework (`espressif32@6.9.0`, ESP-IDF 5.3.1).
+PlatformIO with the ESP-IDF framework (`espressif32@8.0.0`, ESP-IDF 6.1.0, GCC 14.2).
 
 ```sh
 pio run                      # build (also writes firmware-signed.bin for OTA)
@@ -76,7 +76,7 @@ Every `pio run` writes two files to `.pio/build/esp32dev/`:
 To create a new key, use any Python with the `cryptography` package, e.g. ESP-IDF's environment:
 
 ```sh
-~/.platformio/penv/.espidf-5.3.1/bin/python scripts/ota_sign_tool.py genkey ~/.config/esp32pwm/ota_signing_key.pem
+~/.platformio/penv/.espidf-6.1.0/bin/python scripts/ota_sign_tool.py genkey ~/.config/esp32pwm/ota_signing_key.pem
 ```
 
 `scripts/ota_sign_tool.py` can also `sign` and `verify` images by hand.

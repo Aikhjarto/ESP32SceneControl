@@ -1,13 +1,13 @@
 // Streaming check of an espsecure "version 1" signed image: the firmware image followed by
 // a 68-byte block (uint32 0, then ECDSA P-256 r||s big-endian over SHA-256 of the image).
-// Depends only on mbedTLS, so it also builds on the host for testing.
+// Uses only the PSA Crypto API, so it also builds on the host for testing.
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
 
-#include "mbedtls/sha256.h"
+#include "psa/crypto.h"
 
 namespace ss {
 
@@ -27,7 +27,8 @@ public:
     bool verify(const uint8_t publicKey[64], std::string& err);
 
 private:
-    mbedtls_sha256_context sha_;
+    psa_hash_operation_t hash_;
+    bool hashOk_ = false;
     size_t total_ = 0;
     size_t imageLen_ = 0;
     size_t fed_ = 0;
