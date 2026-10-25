@@ -8,6 +8,7 @@
 #include "driver/i2c_master.h"
 #include "driver/mcpwm_prelude.h"
 #include "out/Pca9685.h"
+#include "soc/soc_caps.h"
 
 namespace ss {
 
@@ -33,6 +34,9 @@ public:
     const HwChannel& channel(int servo) const { return map_[servo]; }
     bool pcaFound(int board) const { return pca_[board].ok(); }
     std::string describe(int servo) const;  // e.g. "mcpwm0.3", "ledc-hs.5", "pca0.12"
+    int used(HwKind k) const { return k >= HwKind::LedcHs && k <= HwKind::Mcpwm1 ? used_[static_cast<int>(k) - 1] : 0; }
+
+    static constexpr int kMcpwmPerUnit = SOC_MCPWM_OPERATORS_PER_GROUP * SOC_MCPWM_GENERATORS_PER_OPERATOR;
 
     static bool gpioUsableForServo(int gpio);
 

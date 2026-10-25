@@ -1,7 +1,9 @@
 // ESP32PWM — servo scene controller, application entry point.
 
 #include "app/App.h"
+#include "app/Commands.h"
 #include "app/MotionTask.h"
+#include "app/Persist.h"
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_idf_version.h"
@@ -9,6 +11,10 @@
 #include "nvs_flash.h"
 
 static const char* TAG = "main";
+
+struct LogSink : ss::ReplySink {
+    void line(const std::string& text) override { ESP_LOGW(TAG, "%s", text.c_str()); }
+};
 
 static void initNvs() {
     esp_err_t err = nvs_flash_init();
@@ -35,7 +41,16 @@ extern "C" void app_main() {
     initNvs();
     app::initLock();
 
+    // Defaults, then the saved settings replayed through the same parser as serial/WebSocket.
     setDefaults(app::config());
+    std::string saved;
+    if (app::persist::load(saved)) {
+        LogSink log;
+        app::parser().replay(saved, log);
+        ESP_LOGI(TAG, "config loaded (%u bytes)", static_cast<unsigned>(saved.size()));
+    }
+
     app::outputs().begin(app::config(), app::bootLog());
     app::startMotion();
+    app::startCommands();
 }

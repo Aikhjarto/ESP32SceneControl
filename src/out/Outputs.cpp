@@ -15,7 +15,7 @@ namespace ss {
 static const char* TAG = "outputs";
 
 constexpr int kLedcPerMode = SOC_LEDC_CHANNEL_NUM;
-constexpr int kMcpwmPerUnit = SOC_MCPWM_OPERATORS_PER_GROUP * SOC_MCPWM_GENERATORS_PER_OPERATOR;
+constexpr int kMcpwmPerUnit = Outputs::kMcpwmPerUnit;
 constexpr int kLedcBits = 16;
 constexpr uint32_t kMcpwmGroupHz = 80000000;  // 160 MHz PLL / default group prescale 2
 
