@@ -448,7 +448,32 @@ function updateCardStatus(card, i) {
   r.stateTag.className = `tag ${tag === 'stopped' || tag === 'testing' ? 'warn' : ''}`;
 }
 
-// Angle over one scene cycle, cursor at the current scene time, dot at the real output.
+// The time window a servo's plot shows. Return/once servos repeat with the scene cycle;
+// a pingpong servo repeats on its own cycle (2·duration + 2·dwell, after its delay), which
+// in general does not divide the scene period, so it gets a window of exactly one own cycle.
+function plotWindow(s, period) {
+  const own = 2 * s.dur + 2 * s.dwell;
+  if (s.mode === 'pingpong' && own > 0) {
+    return {
+      span: own,
+      at: (tMs) => (tMs <= s.delay ? 0 : (tMs - s.delay) % own),
+      curve: (tau) => targetDeg(s, s.delay + own + tau, period),  // skip the initial delay
+    };
+  }
+  return {
+    span: period,
+    at: (tMs) => (s.mode === 'once' ? Math.min(tMs, period) : tMs % period),
+    curve: (tau) => targetDeg(s, tau, period),
+  };
+}
+
+// A servo that is simply following the choreography outputs exactly its target, so its
+// dot is drawn on the curve at the (interpolated) cursor. While stopped, rejoining or
+// testing it shows the last reported position at the time it was measured, so the lag
+// behind the choreography stays visible.
+const followsTarget = (i) => !status.stop.has(i) && !status.rejoin.has(i) && !status.test.has(i);
+
+// Angle over one cycle, cursor at the current scene time, dot at the servo's output.
 function drawPlot(canvas, i, tMs, period) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -461,8 +486,8 @@ function drawPlot(canvas, i, tMs, period) {
   const s = servoParams(i);
   const pad = 4;
   const y = (deg) => h - pad - (deg / s.range) * (h - 2 * pad);
-  const span = s.mode === 'pingpong' ? Math.max(period, s.delay + 2 * s.dur + 2 * s.dwell) : period;
-  const x = (t) => (t / span) * w;
+  const win = plotWindow(s, period);
+  const x = (tau) => (tau / win.span) * w;
 
   ctx.fillStyle = css.getPropertyValue('--track');
   ctx.fillRect(0, 0, w, h);
@@ -471,26 +496,27 @@ function drawPlot(canvas, i, tMs, period) {
   ctx.beginPath();
   const steps = Math.min(240, Math.round(w));
   for (let k = 0; k <= steps; k++) {
-    const t = (k / steps) * span;
-    const deg = targetDeg(s, t, period);
-    if (k === 0) ctx.moveTo(x(t), y(deg)); else ctx.lineTo(x(t), y(deg));
+    const tau = (k / steps) * win.span;
+    if (k === 0) ctx.moveTo(x(tau), y(win.curve(tau))); else ctx.lineTo(x(tau), y(win.curve(tau)));
   }
   ctx.stroke();
 
-  const tc = s.mode === 'once' ? Math.min(tMs, span) : tMs % span;
+  const cursor = x(win.at(tMs));
   ctx.strokeStyle = css.getPropertyValue('--stop');
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(x(tc), 0);
-  ctx.lineTo(x(tc), h);
+  ctx.moveTo(cursor, 0);
+  ctx.lineTo(cursor, h);
   ctx.stroke();
 
-  if (positions[i] !== undefined) {
-    ctx.fillStyle = css.getPropertyValue('--text');
-    ctx.beginPath();
-    ctx.arc(x(tc), y(positions[i]), 4, 0, 2 * Math.PI);
-    ctx.fill();
-  }
+  if (positions[i] === undefined) return;
+  const live = followsTarget(i);
+  const dotX = live ? cursor : x(win.at(status.t * 1000));
+  const dotDeg = live ? targetDeg(s, tMs, period) : positions[i];
+  ctx.fillStyle = css.getPropertyValue('--text');
+  ctx.beginPath();
+  ctx.arc(dotX, y(dotDeg), 4, 0, 2 * Math.PI);
+  ctx.fill();
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +527,8 @@ function renderTimeline() {
   if (host.closest('.tab').hidden) return;
   const idx = servoIndices().filter(servoActive);
   const period = effectivePeriod();
+  const cycle = Math.floor(sceneTimeMs() / period);
+  const w0 = cycle * period;  // start of the scene cycle being shown
   // Drawn at the real pixel width so labels stay readable on phones.
   const W = Math.max(host.clientWidth, 320), label = W < 600 ? 72 : 110, rowH = 22, top = 20;
   const H = top + idx.length * rowH + 6;
@@ -527,33 +555,43 @@ function renderTimeline() {
     const g = status.stop.has(i) ? 'stopped' : '';
     add('text', { x: 4, y: y + 15 }, servoName(i).slice(0, W < 600 ? 10 : 16));
     add('rect', { x: label, y: y + 3, width: W - label - 6, height: rowH - 6, class: `track ${g}` });
+    // Bars in absolute scene time, clipped to the window [w0, w0 + period).
     const bar = (t0, t1, cls) => {
-      if (t1 <= t0 || t0 >= period) return;
-      add('rect', { x: sx(t0), y: y + 3, width: Math.max(1, sx(t1) - sx(t0)), height: rowH - 6, rx: 3, class: `${cls} ${g}` });
+      const a = Math.max(t0 - w0, 0), b = Math.min(t1 - w0, period);
+      if (b <= a) return;
+      add('rect', { x: sx(a), y: y + 3, width: Math.max(1, sx(b) - sx(a)), height: rowH - 6, rx: 3, class: `${cls} ${g}` });
     };
-    if (s.mode === 'pingpong') {
-      for (let t = s.delay; t < period; t += 2 * s.dur + 2 * s.dwell) {
+    const own = 2 * s.dur + 2 * s.dwell;
+    if (s.mode === 'pingpong' && own > 0) {
+      // Own cycle, not tied to the scene period: draw the cycles that overlap this window.
+      for (let k = Math.max(0, Math.floor((w0 - s.delay) / own)); s.delay + k * own < w0 + period; k++) {
+        const t = s.delay + k * own;
         bar(t, t + s.dur, 'move');
         bar(t + s.dur, t + s.dur + s.dwell, 'dwell');
         bar(t + s.dur + s.dwell, t + 2 * s.dur + s.dwell, 'move');
-        if (2 * s.dur + 2 * s.dwell <= 0) break;
       }
+    } else if (s.mode === 'once') {
+      bar(s.delay, s.delay + s.dur, 'move');  // only in the first cycle; afterwards it holds
     } else {
-      bar(s.delay, s.delay + s.dur, 'move');
-      if (s.mode === 'return') {
-        bar(s.delay + s.dur, s.delay + s.dur + s.dwell, 'dwell');
-        bar(s.delay + s.dur + s.dwell, s.delay + 2 * s.dur + s.dwell, 'move');
-      }
+      const c = w0;  // return mode repeats every scene cycle
+      bar(c + s.delay, c + s.delay + s.dur, 'move');
+      bar(c + s.delay + s.dur, c + s.delay + s.dur + s.dwell, 'dwell');
+      bar(c + s.delay + s.dur + s.dwell, c + s.delay + 2 * s.dur + s.dwell, 'move');
     }
   });
   const cursor = add('line', { x1: label, x2: label, y1: top - 4, y2: H, class: 'cursor' });
-  host._cursor = { cursor, sx, period };
+  host._cursor = { cursor, sx, period, cycle };
   host.replaceChildren(svg);
 }
 
 function updateTimelineCursor(tMs) {
-  const c = $('#timeline')._cursor;
+  let c = $('#timeline')._cursor;
   if (!c) return;
+  // New scene cycle (or period changed): pingpong bars sit elsewhere in the next window.
+  if (Math.floor(tMs / c.period) !== c.cycle || c.period !== effectivePeriod()) {
+    renderTimeline();
+    c = $('#timeline')._cursor;
+  }
   const x = c.sx(tMs % c.period);
   c.cursor.setAttribute('x1', x);
   c.cursor.setAttribute('x2', x);
