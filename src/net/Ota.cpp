@@ -12,9 +12,11 @@
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "net/HttpRecv.h"
 #include "net/SignedImage.h"
 #include "net/Wifi.h"
 
@@ -38,6 +40,9 @@ class OtaWriter {
 public:
     ~OtaWriter() {
         if (handle_) esp_ota_abort(handle_);
+        // A rejected or partial image must never be bootable: the bootloader falls back to
+        // other slots without checking signatures, so wipe the image header.
+        if (started_ && !installed_) esp_partition_erase_range(target_, 0, target_->erase_size);
     }
 
     bool begin(size_t total, std::string& err) {
@@ -60,6 +65,7 @@ public:
                 handle_ = 0;
                 return fail(std::string("esp_ota_begin: ") + esp_err_to_name(e), err);
             }
+            started_ = true;
             ESP_LOGI(TAG, "writing %s to %s (%u bytes)", version_.c_str(), target_->label, unsigned(total_));
         }
         signature_.feed(data, len);
@@ -77,6 +83,7 @@ public:
         handle_ = 0;
         if (e == ESP_OK) e = esp_ota_set_boot_partition(target_);
         if (e != ESP_OK) return fail(e == ESP_ERR_OTA_VALIDATE_FAILED ? "image is corrupt" : esp_err_to_name(e), err);
+        installed_ = true;
         return true;
     }
 
@@ -111,6 +118,8 @@ private:
 
     const esp_partition_t* target_ = nullptr;
     esp_ota_handle_t handle_ = 0;
+    bool started_ = false;    // flash of the target slot has been touched
+    bool installed_ = false;  // verified and selected as boot partition
     SignedImage signature_;
     size_t total_ = 0;
     size_t written_ = 0;
@@ -176,20 +185,13 @@ esp_err_t otaUploadHandler(httpd_req_t* req) {
     size_t received = 0;
     while (ok && received < req->content_len) {
         size_t want = std::min(kChunk, req->content_len - received);
-        size_t have = 0;
-        while (have < want) {
-            int r = httpd_req_recv(req, reinterpret_cast<char*>(buf.get()) + have, want - have);
-            if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
-            if (r <= 0) break;
-            have += r;
-        }
-        if (have < want) {
-            err = "upload interrupted";
+        if (!recvExact(req, reinterpret_cast<char*>(buf.get()), want)) {
+            err = "upload interrupted or stalled";
             ok = false;
             break;
         }
-        ok = writer.write(buf.get(), have, err);
-        received += have;
+        ok = writer.write(buf.get(), want, err);
+        received += want;
     }
     if (ok) ok = writer.finish(err);
 
@@ -281,8 +283,9 @@ bool startOtaDownload(const std::string& url, std::string& err) {
         err = "an update is already running";
         return false;
     }
-    if (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0) {
-        err = "URL must start with http://";
+    if (url.rfind("http://", 0) != 0) {
+        // No CA certificates are built in, so https would always fail later.
+        err = "URL must start with http:// (https is not supported)";
         return false;
     }
     auto* arg = new std::string(url);
