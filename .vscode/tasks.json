@@ -5,22 +5,37 @@
             "label": "OTA: build signed firmware",
             "type": "shell",
             "command": "${userHome}/.platformio/penv/bin/pio",
-            "args": ["run", "-e", "esp32dev"],
+            "args": [
+                "run",
+                "-e",
+                "esp32dev"
+            ],
             "group": "build",
-            "problemMatcher": ["$gcc"]
+            "problemMatcher": [
+                "$gcc"
+            ]
         },
         {
             "label": "OTA: serve firmware (port 9999)",
             "detail": "Builds, then serves firmware-signed.bin for $Firmware/Update / the web UI button",
             "type": "shell",
             "command": "python3",
-            "args": ["${workspaceFolder}/tools/serve_firmware.py", "--port", "9999"],
+            "args": [
+                "${workspaceFolder}/tools/serve_firmware.py",
+                "--port",
+                "9999"
+            ],
             "dependsOn": "OTA: build signed firmware",
             "isBackground": true,
-            "presentation": { "reveal": "always", "panel": "dedicated" },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
             "problemMatcher": {
                 "owner": "ota-server",
-                "pattern": { "regexp": "^__never_matches__$" },
+                "pattern": {
+                    "regexp": "^__never_matches__$"
+                },
                 "background": {
                     "activatesOnStart": true,
                     "beginsPattern": "^Firmware:|^Warning:",
@@ -33,12 +48,21 @@
             "detail": "Web UI against the desktop simulator, no ESP32 needed",
             "type": "shell",
             "command": "python3",
-            "args": ["${workspaceFolder}/tools/sim_server.py", "--port", "8080"],
+            "args": [
+                "${workspaceFolder}/tools/sim_server.py",
+                "--port",
+                "8080"
+            ],
             "isBackground": true,
-            "presentation": { "reveal": "always", "panel": "dedicated" },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
             "problemMatcher": {
                 "owner": "sim-server",
-                "pattern": { "regexp": "^__never_matches__$" },
+                "pattern": {
+                    "regexp": "^__never_matches__$"
+                },
                 "background": {
                     "activatesOnStart": true,
                     "beginsPattern": "^building simulator|^======== Running",
