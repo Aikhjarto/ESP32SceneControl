@@ -4,7 +4,9 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 namespace ss::app {
 
@@ -34,13 +36,36 @@ void restartSoon() {
     if (esp_timer_create(&ta, &t) == ESP_OK) esp_timer_start_once(t, 500000);
 }
 
-void setBroadcaster(Broadcaster b) { gBroadcaster = b; }
+// Broadcasts are delivered by a low-priority task: writing to the UART or queueing
+// WebSocket frames can block, and callers include the 50 Hz motion task.
+static QueueHandle_t gBroadcastQueue;
+
+static void broadcastTask(void*) {
+    for (;;) {
+        std::string* text;
+        xQueueReceive(gBroadcastQueue, &text, portMAX_DELAY);
+        gBroadcaster(*text);
+        delete text;
+    }
+}
+
+void setBroadcaster(Broadcaster b) {
+    gBroadcaster = b;
+    if (!gBroadcastQueue) {
+        gBroadcastQueue = xQueueCreate(16, sizeof(std::string*));
+        xTaskCreatePinnedToCore(broadcastTask, "broadcast", 4096, nullptr, 4, nullptr, 0);
+    }
+}
 
 void broadcast(const std::string& text) {
-    if (gBroadcaster) {
-        gBroadcaster(text);
-    } else {
+    if (!gBroadcastQueue) {
         ESP_LOGI(TAG, "%s", text.c_str());
+        return;
+    }
+    auto* copy = new std::string(text);
+    if (xQueueSend(gBroadcastQueue, &copy, 0) != pdTRUE) {  // never wait
+        delete copy;
+        ESP_LOGW(TAG, "broadcast queue full, dropped: %s", text.c_str());
     }
 }
 

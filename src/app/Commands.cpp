@@ -6,7 +6,9 @@
 #include "app/App.h"
 #include "app/MotionTask.h"
 #include "app/Persist.h"
+#include "core/LineReader.h"
 #include "driver/uart.h"
+#include "driver/uart_vfs.h"
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
@@ -26,7 +28,6 @@ namespace ss::app {
 static const char* TAG = "cmd";
 
 constexpr uart_port_t kUartPort = UART_NUM_0;
-constexpr size_t kMaxLine = 256;
 
 static WsSend gWsSend;
 static WsBroadcast gWsBroadcast;
@@ -174,26 +175,21 @@ static void executorTask(void*) {
 }
 
 static void uartTask(void*) {
-    std::string line;
-    bool lastWasCr = false;
+    LineReader reader;
     uint8_t buf[64];
     for (;;) {
         int n = uart_read_bytes(kUartPort, buf, sizeof(buf), pdMS_TO_TICKS(20));
         for (int i = 0; i < n; ++i) {
-            char c = static_cast<char>(buf[i]);
-            if (Parser::isRealtime(c)) {
-                submitRealtime(kUart, c);
-            } else if (c == '\r' || c == '\n') {
-                if (!(c == '\n' && lastWasCr)) {
-                    submitLine(kUart, line);
-                    line.clear();
-                }
-            } else if (c == '\b' || c == 0x7F) {
-                if (!line.empty()) line.pop_back();
-            } else if (line.size() < kMaxLine) {
-                line += c;
+            switch (reader.feed(static_cast<char>(buf[i]))) {
+                case LineReader::Event::Realtime:
+                    submitRealtime(kUart, reader.realtimeChar());
+                    break;
+                case LineReader::Event::Line:
+                    submitLine(kUart, reader.line());
+                    break;
+                default:
+                    break;
             }
-            lastWasCr = c == '\r';
         }
     }
 }
@@ -204,7 +200,11 @@ void setWsTransport(WsSend send, WsBroadcast broadcast) {
 }
 
 void startCommands() {
-    ESP_ERROR_CHECK(uart_driver_install(kUartPort, 1024, 4096, 0, nullptr, 0));  // TX ring: writers never wait
+    // Writers block while a large reply drains, so time-critical tasks must not write here
+    // (they use app::broadcast, which hands the text to a background task).
+    ESP_ERROR_CHECK(uart_driver_install(kUartPort, 1024, 4096, 0, nullptr, 0));
+    // Route stdout/ESP_LOG through the driver too, so log lines can't land inside replies.
+    uart_vfs_dev_use_driver(kUartPort);
     gQueue = xQueueCreate(16, sizeof(Request*));
     setBroadcaster(broadcastAll);
     xTaskCreatePinnedToCore(executorTask, "cmd", 6144, nullptr, 5, nullptr, 0);

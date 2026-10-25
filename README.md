@@ -140,6 +140,9 @@ Peak speed compared with a constant-speed move: `const` 1×, `trap` 1/(1−a) wh
 
 Syntax follows FluidNC. Each command line is answered with `ok`, or with `error:N`
 plus a `[MSG:ERR: reason]` line before it. Realtime characters act at once and get no `ok`.
+Over serial, `!` `~` `?` are ordinary text inside a value (after `=`), so names and passwords
+may contain them; Ctrl-X always acts at once. Over WebSocket a realtime command is a frame
+holding just that character.
 
 | Command | Meaning |
 |---|---|
@@ -160,7 +163,7 @@ plus a `[MSG:ERR: reason]` line before it. Realtime characters act at once and g
 | `$Servo/Test=n,deg` | Drive servo n to an angle at up to `max_dps` (calibration) |
 | `$Servo/Release=n` | Leave test mode and rejoin the scene (`*` = all) |
 | `$Positions` | Current output angles, e.g. `[POS:0=45.0,1=90.5]` |
-| `$Firmware/Update[=url]` | Download and install signed firmware (default `http://<first client>:9999/firmware.bin`); progress as `[OTA:download 40%]` |
+| `$Firmware/Update[=url]` | Download and install signed firmware (default `http://<first client>:9999/firmware.bin`; `http://` only); progress as `[OTA:download 40%]` |
 
 Error codes: 2 bad value, 3 unknown command, 4 out of range, 5 unknown setting,
 6 servo not enabled, 7 flash write failed.

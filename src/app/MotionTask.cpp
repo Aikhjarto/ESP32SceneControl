@@ -15,6 +15,7 @@ namespace ss::app {
 static const char* TAG = "motion";
 
 static TaskHandle_t gTask;
+static int64_t gTickUs = 20000;
 static int64_t gEnableAtUs[kMaxServos];  // staggered power-up
 static bool gOn[kMaxServos];
 static float gPulse[kMaxServos];
@@ -76,7 +77,9 @@ static void motionTask(void*) {
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         const int64_t now = esp_timer_get_time();
-        const int64_t dt = now - last;
+        // After a stall (e.g. flash writes) the scene clock lags instead of leaping, so
+        // servos never jump to catch up.
+        const int64_t dt = std::min<int64_t>(now - last, 4 * gTickUs);
         last = now;
 
         uint32_t debounceMs;
@@ -117,6 +120,7 @@ void startMotion() {
         Locked l;
         const Config& cfg = config();
         hz = std::clamp<uint32_t>(cfg.scene.updateHz, 10, 200);
+        gTickUs = 1000000 / hz;
         initButton(cfg.button);
         // Power servos up one after another so they don't all jump at once.
         int64_t at = esp_timer_get_time();
@@ -136,7 +140,7 @@ void startMotion() {
     ta.name = "motion";
     esp_timer_handle_t timer;
     ESP_ERROR_CHECK(esp_timer_create(&ta, &timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(timer, 1000000 / hz));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(timer, gTickUs));
     ESP_LOGI(TAG, "running at %lu Hz", static_cast<unsigned long>(hz));
 }
 

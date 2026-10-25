@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "core/Config.h"
+#include "core/LineReader.h"
 #include "core/Parser.h"
 #include "core/Scene.h"
 
@@ -205,6 +206,40 @@ void test_host_commands_extend_the_parser() {
     TEST_ASSERT_EQUAL_STRING("error:3", exec("$Firmware/Nope").last().c_str());
 }
 
+// Feeds text into a LineReader and records lines and realtime characters.
+static std::vector<std::string> readSerial(const std::string& input) {
+    LineReader r;
+    std::vector<std::string> events;
+    for (char c : input) {
+        LineReader::Event e = r.feed(c);
+        if (e == LineReader::Event::Line) events.push_back("L:" + r.line());
+        if (e == LineReader::Event::Realtime) events.push_back(std::string("R:") + r.realtimeChar());
+    }
+    return events;
+}
+
+void test_serial_realtime_chars_are_literal_inside_values() {
+    auto ev = readSerial("$AP/Password=abc!de?f~\r\n");
+    TEST_ASSERT_EQUAL(1, static_cast<int>(ev.size()));
+    TEST_ASSERT_EQUAL_STRING("L:$AP/Password=abc!de?f~", ev[0].c_str());
+
+    ev = readSerial("?!~$I\n");
+    TEST_ASSERT_EQUAL(4, static_cast<int>(ev.size()));
+    TEST_ASSERT_EQUAL_STRING("R:?", ev[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("R:!", ev[1].c_str());
+    TEST_ASSERT_EQUAL_STRING("R:~", ev[2].c_str());
+    TEST_ASSERT_EQUAL_STRING("L:$I", ev[3].c_str());
+
+    ev = readSerial("$/servo/0/name=A\x18" "B\r");  // Ctrl-X always acts immediately
+    TEST_ASSERT_EQUAL_STRING("R:\x18", ev[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("L:$/servo/0/name=AB", ev[1].c_str());
+
+    ev = readSerial("$IX\b\r\n\n");  // backspace; CR LF is one line end, a lone LF another
+    TEST_ASSERT_EQUAL(2, static_cast<int>(ev.size()));
+    TEST_ASSERT_EQUAL_STRING("L:$I", ev[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("L:", ev[1].c_str());
+}
+
 void test_empty_line_and_help() {
     TEST_ASSERT_EQUAL_STRING("ok", exec("").last().c_str());
     Capture h = exec("$");
@@ -235,6 +270,7 @@ int main() {
     RUN_TEST(test_scene_and_servo_commands);
     RUN_TEST(test_realtime_characters);
     RUN_TEST(test_host_commands_extend_the_parser);
+    RUN_TEST(test_serial_realtime_chars_are_literal_inside_values);
     RUN_TEST(test_empty_line_and_help);
     RUN_TEST(test_yaml_dump);
     return UNITY_END();

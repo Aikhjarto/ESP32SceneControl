@@ -26,6 +26,7 @@ struct Locked {
 };
 
 // Asynchronous message to every connected channel (serial and WebSocket), e.g. "[MSG:INFO: Hold (button)]".
+// Never blocks the caller; delivery happens in a background task.
 using Broadcaster = void (*)(const std::string& text);
 void setBroadcaster(Broadcaster b);
 void broadcast(const std::string& text);
