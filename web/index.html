@@ -1,1 +1,103 @@
-<!doctype html><title>ServoScene</title><link rel="stylesheet" href="style.css"><p>ServoScene</p><script src="app.js"></script>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1d2733">
+<title>ServoScene</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='5' width='10' height='6' rx='1' fill='%232563eb'/%3E%3Ccircle cx='8' cy='8' r='2' fill='%23fff'/%3E%3Crect x='8' y='7' width='7' height='2' rx='1' fill='%23c2410c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="bar-row">
+    <h1>ServoScene</h1>
+    <span id="conn" class="conn" title="Connection">offline</span>
+    <span id="state" class="badge">—</span>
+    <span id="clock" class="clock">T 0.0 s</span>
+  </div>
+  <div class="bar-row actions">
+    <button id="btnRun" class="big go">Go</button>
+    <button id="btnReset" title="Scene time back to 0, servos rejoin smoothly">Reset</button>
+    <button id="btnAllGo" title="Release all per-servo stops">All ▶</button>
+    <button id="btnAllStop" title="Stop every servo individually">All ⏸</button>
+    <button id="btnSave" class="save" title="Store the settings in flash">Save</button>
+  </div>
+</header>
+
+<div id="restart" class="banner" hidden>
+  Some changes take effect after a restart.
+  <button id="btnSaveRestart">Save &amp; restart</button>
+</div>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="servos" aria-selected="true">Servos</button>
+  <button role="tab" data-tab="timeline">Timeline</button>
+  <button role="tab" data-tab="calibrate">Calibrate</button>
+  <button role="tab" data-tab="settings">Settings</button>
+  <button role="tab" data-tab="console">Console</button>
+</nav>
+
+<main>
+  <section id="tab-servos" class="tab">
+    <div id="cards" class="cards"></div>
+    <button id="btnAdd" class="add">+ Add servo</button>
+  </section>
+
+  <section id="tab-timeline" class="tab" hidden>
+    <p class="hint">One scene cycle. Bars show each servo's delay, move, dwell and return; the line is the current scene time.</p>
+    <div id="timeline" class="timeline"></div>
+  </section>
+
+  <section id="tab-calibrate" class="tab" hidden>
+    <div class="panel">
+      <label class="row">Servo <select id="calServo"></select></label>
+      <p class="hint" id="calHw"></p>
+      <label class="row">Test angle <output id="calDegOut">90°</output></label>
+      <input id="calDeg" type="range" min="0" max="180" step="0.5" value="90">
+      <div class="row-buttons">
+        <button id="calCenter">Center</button>
+        <button id="calRelease">Release (rejoin scene)</button>
+      </div>
+      <p class="hint">While testing, the servo follows the slider at up to max_dps and ignores the scene. Release blends it back into the choreography.</p>
+      <div id="calFields" class="fields"></div>
+    </div>
+  </section>
+
+  <section id="tab-settings" class="tab" hidden>
+    <div id="settingsGroups"></div>
+    <div class="panel">
+      <h2>Backup &amp; maintenance</h2>
+      <div class="row-buttons">
+        <a class="button" href="/config.txt" download>Download config</a>
+        <label class="button file">Restore config…<input id="restoreFile" type="file" accept=".txt,text/plain" hidden></label>
+        <button id="btnInfo">Device info</button>
+        <button id="btnDefaults" class="danger">Factory defaults</button>
+        <button id="btnRestart" class="danger">Restart</button>
+      </div>
+      <pre id="infoOut" class="info"></pre>
+    </div>
+  </section>
+
+  <section id="tab-console" class="tab" hidden>
+    <div class="panel console">
+      <pre id="log" class="log"></pre>
+      <form id="consoleForm" class="console-input">
+        <input id="consoleLine" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="$H for help, ? for status">
+        <button type="submit">Send</button>
+      </form>
+      <div class="row-buttons">
+        <button data-cmd="$I">$I</button>
+        <button data-cmd="$$">$$</button>
+        <button data-cmd="$CD">$CD</button>
+        <button data-cmd="?">?</button>
+        <button id="btnClearLog">Clear</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

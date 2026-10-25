@@ -153,7 +153,8 @@ void test_replay_reports_bad_lines() {
     Capture r;
     parser->replay("$/servo/1/start_deg=10\n$/servo/1/bogus=1\n", r);
     TEST_ASSERT_EQUAL(1, static_cast<int>(r.lines.size()));
-    TEST_ASSERT_TRUE(r.hasPrefix("[MSG:WARN: Config line failed: $/servo/1/bogus=1]"));
+    TEST_ASSERT_EQUAL_STRING("[MSG:WARN: Config line failed: $/servo/1/bogus=1 (unknown setting: $/servo/1/bogus)]",
+                             r.lines[0].c_str());
     TEST_ASSERT_EQUAL_FLOAT(10, cfg.servo[1].startDeg);
 }
 

@@ -66,13 +66,13 @@ void Parser::realtime(char c, ReplySink& out) {
 }
 
 void Parser::replay(const std::string& text, ReplySink& out) {
-    // Collects only the failing lines, so a clean replay is silent.
+    // Reports only failing lines (with the reason), so a clean replay is silent.
     struct ErrorSink : ReplySink {
-        std::string buffered;
+        std::string reason;
         bool failed = false;
         void line(const std::string& t) override {
             if (t.rfind("error:", 0) == 0) failed = true;
-            if (t != "ok") buffered += t + "\n";
+            if (t.rfind("[MSG:ERR: ", 0) == 0) reason = t.substr(10, t.size() - 11);
         }
     };
     replaying_ = true;
@@ -85,7 +85,7 @@ void Parser::replay(const std::string& text, ReplySink& out) {
         if (line.empty()) continue;
         ErrorSink sink;
         execute(line, sink);
-        if (sink.failed) out.line("[MSG:WARN: Config line failed: " + line + "] " + sink.buffered);
+        if (sink.failed) out.line("[MSG:WARN: Config line failed: " + line + " (" + sink.reason + ")]");
     }
     replaying_ = false;
 }
