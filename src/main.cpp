@@ -16,8 +16,15 @@
 
 static const char* TAG = "main";
 
-struct LogSink : ss::ReplySink {
-    void line(const std::string& text) override { ESP_LOGW(TAG, "%s", text.c_str()); }
+// Saved settings that fail to apply at boot: logged, and listed by $I / the web UI.
+struct BootReplaySink : ss::ReplySink {
+    void line(const std::string& text) override {
+        ESP_LOGW(TAG, "%s", text.c_str());
+        static const std::string kPrefix = "[MSG:WARN: ";
+        std::string msg = text;
+        if (msg.rfind(kPrefix, 0) == 0 && msg.back() == ']') msg = msg.substr(kPrefix.size(), msg.size() - kPrefix.size() - 1);
+        ss::app::bootLog() += msg + "\n";
+    }
 };
 
 static void initNvs() {
@@ -49,7 +56,7 @@ extern "C" void app_main() {
     setDefaults(app::config());
     std::string saved;
     if (app::persist::load(saved)) {
-        LogSink log;
+        BootReplaySink log;
         app::parser().replay(saved, log);
         ESP_LOGI(TAG, "config loaded (%u bytes)", static_cast<unsigned>(saved.size()));
     }

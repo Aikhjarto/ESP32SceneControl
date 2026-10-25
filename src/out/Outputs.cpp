@@ -61,6 +61,16 @@ void Outputs::begin(const Config& cfg, std::string& log) {
     initLedc(cfg);
     initMcpwm(cfg, 0, log);
     initMcpwm(cfg, 1, log);
+
+    for (int i = 0; i < kMaxServos; ++i) {
+        if (map_[i].kind == HwKind::None) continue;
+        const ServoConfig& s = cfg.servo[i];
+        float longest = std::min(std::max(s.minUs, s.maxUs) + std::max(s.trimUs, 0.0f), 3000.0f);
+        if (longest > maxPulseUs(map_[i])) {
+            addLog(log, "servo %d: %.0f us pulse does not fit the PWM period of %s, clamped to %.0f us", i, longest,
+                   describe(i).c_str(), maxPulseUs(map_[i]));
+        }
+    }
     ESP_LOGI(TAG, "allocated: LEDC-HS %d/%d, LEDC-LS %d/%d, MCPWM0 %d/%d, MCPWM1 %d/%d", used_[0], kLedcPerMode,
              used_[1], kLedcPerMode, used_[2], kMcpwmPerUnit, used_[3], kMcpwmPerUnit);
 }
@@ -73,7 +83,12 @@ bool Outputs::allocate(const Config& cfg, int servo, std::string& log) {
             addLog(log, "servo %d: invalid pin pca.%u.%u", servo, pin.board, pin.num);
             return false;
         }
-        if (!pca_[pin.board].ok()) return false;  // already reported by initPca
+        if (!cfg.pca[pin.board].enable) {
+            addLog(log, "servo %d: pca.%u.%u is on PCA9685 board %u, which is disabled ($/pca/%u/enable)", servo,
+                   pin.board, pin.num, pin.board, pin.board);
+            return false;
+        }
+        if (!pca_[pin.board].ok()) return false;  // missing board already reported by initPca
         for (int j = 0; j < servo; ++j) {
             if (pin_[j] == pin) {
                 addLog(log, "servo %d: pca.%u.%u already used by servo %d", servo, pin.board, pin.num, j);
@@ -170,6 +185,7 @@ void Outputs::initMcpwm(const Config& cfg, int unit, std::string& log) {
     tc.period_ticks = resolution / freq;
     ESP_ERROR_CHECK(mcpwm_new_timer(&tc, &u.timer));
     u.ticksPerUs = resolution / 1e6f;
+    u.periodUs = 1e6f / freq;
 
     for (int i = 0; i < kMaxServos; ++i) {
         if (map_[i].kind != kind) continue;
@@ -236,8 +252,31 @@ void Outputs::initPca(const Config& cfg, std::string& log) {
     }
 }
 
+// Longest pulse a block may output: a pulse as long as the period would hold the line
+// permanently high (LEDC) or be rejected (MCPWM).
+float Outputs::maxPulseUs(const HwChannel& hw) const {
+    float period = 0;
+    switch (hw.kind) {
+        case HwKind::LedcHs:
+        case HwKind::LedcLs:
+            period = 1e6f / ledcFreq_;
+            break;
+        case HwKind::Mcpwm0:
+        case HwKind::Mcpwm1:
+            period = mcpwm_[hw.kind == HwKind::Mcpwm0 ? 0 : 1].periodUs;
+            break;
+        case HwKind::Pca:
+            period = 1e6f / pca_[hw.unit].freqHz();
+            break;
+        default:
+            break;
+    }
+    return 0.9f * period;
+}
+
 void Outputs::setPulseUs(int servo, float us) {
     const HwChannel& hw = map_[servo];
+    us = std::min(us, maxPulseUs(hw));
     switch (hw.kind) {
         case HwKind::LedcHs:
         case HwKind::LedcLs: {

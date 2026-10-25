@@ -48,10 +48,12 @@ private:
         mcpwm_cmpr_handle_t cmp[6] = {};
         mcpwm_gen_handle_t gen[6] = {};
         float ticksPerUs = 0;
+        float periodUs = 0;
         bool forcedOff[6] = {};
     };
 
     bool allocate(const Config& cfg, int servo, std::string& log);
+    float maxPulseUs(const HwChannel& hw) const;
     void initLedc(const Config& cfg);
     void initMcpwm(const Config& cfg, int unit, std::string& log);
     void initPca(const Config& cfg, std::string& log);
