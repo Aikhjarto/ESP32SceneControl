@@ -202,6 +202,31 @@ void test_test_mode_is_speed_limited_and_releases_with_rejoin() {
     TEST_ASSERT_TRUE(sc.rejoining(0));
 }
 
+// With the automatic period, editing or disabling one servo changes the cycle length for
+// everyone; the other servos must blend over instead of jumping (review finding).
+void test_period_change_does_not_make_other_servos_jump() {
+    cfg.scene.periodMs = 0;
+    cfg.servo[1].enable = true;
+    cfg.servo[1].delayMs = 3000;  // period = 3000 + 2*1500 + 500 = 6500 ms
+    Scene sc(cfg);
+    sc.setRunning(true);
+    run(sc, 20000);
+    const float maxStep = 600 * 0.02f * 1.5f;  // servo speed limit per tick, with margin
+
+    for (auto edit : {+1, 0}) {
+        if (edit) cfg.servo[1].delayMs = 3500;  // period → 7000 ms
+        else cfg.servo[1].enable = false;       // period → servo 0's 2500 ms
+        float prev = sc.output(0);
+        for (int k = 0; k < 200; ++k) {
+            sc.tick(20000);
+            TEST_ASSERT_TRUE(std::fabs(sc.output(0) - prev) < maxStep);
+            prev = sc.output(0);
+        }
+        TEST_ASSERT_FALSE(sc.rejoining(0));
+        TEST_ASSERT_FLOAT_WITHIN(1e-3f, targetDeg(cfg.servo[0], sc.timeUs(), sc.periodMs()), sc.output(0));
+    }
+}
+
 void test_status_lists_states() {
     Scene sc(cfg);
     cfg.servo[3].enable = true;
@@ -229,6 +254,7 @@ int main() {
     RUN_TEST(test_rejoin_is_smooth_and_resyncs);
     RUN_TEST(test_rejoin_is_frozen_by_global_hold);
     RUN_TEST(test_test_mode_is_speed_limited_and_releases_with_rejoin);
+    RUN_TEST(test_period_change_does_not_make_other_servos_jump);
     RUN_TEST(test_status_lists_states);
     return UNITY_END();
 }

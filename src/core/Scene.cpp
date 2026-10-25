@@ -12,7 +12,11 @@ static constexpr int64_t kMaxRejoinUs = 10'000'000;
 
 void Scene::tick(int64_t dtUs) {
     if (running_) tUs_ += dtUs;
-    periodMs_ = effectivePeriodMs(cfg_);
+    // A new cycle length (automatic period after editing any servo, or $/scene/period_ms)
+    // shifts the timeline of every return-mode servo: blend them over instead of jumping.
+    const uint32_t period = effectivePeriodMs(cfg_);
+    const bool periodChanged = periodMs_ != 0 && period != periodMs_;
+    periodMs_ = period;
 
     for (int i = 0; i < kMaxServos; ++i) {
         const ServoConfig& s = cfg_.servo[i];
@@ -29,6 +33,8 @@ void Scene::tick(int64_t dtUs) {
         }
         if (!st.active) {  // re-enabled
             st.active = true;
+            startRejoin(i);
+        } else if (periodChanged && s.mode == Mode::Return) {
             startRejoin(i);
         }
 
