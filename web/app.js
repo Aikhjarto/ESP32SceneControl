@@ -7,6 +7,8 @@ const MODES = ['once', 'return', 'pingpong'];
 const DRIVERS = ['auto', 'ledc', 'mcpwm'];
 const ENUMS = { profile: PROFILES, mode: MODES, driver: DRIVERS };
 const MAX_SERVOS = 64;
+const REPLY_TIMEOUT_MS = 10000;
+const SIGNED_FIELDS = new Set(['trim_us']);  // may be negative: iOS decimal keypads have no minus key
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -142,7 +144,10 @@ function connect() {
   ws.onopen = () => { setConn(true); loadAll(); };
   ws.onclose = () => {
     setConn(false);
-    for (const p of pending.splice(0)) p.reject(new Error('disconnected'));
+    for (const p of pending.splice(0)) {
+      clearTimeout(p.timer);
+      p.reject(new Error('disconnected'));
+    }
     setTimeout(connect, 1500);
   };
   ws.onmessage = (e) => onFrame(e.data);
@@ -155,7 +160,14 @@ function send(cmd, { quiet = false } = {}) {
       reject(new Error('offline'));
       return;
     }
-    pending.push({ resolve, reject });
+    // Replies are matched to requests by order. If one ever goes missing, every later
+    // reply would land on the wrong request, so resynchronise by reconnecting.
+    const entry = { resolve, reject };
+    entry.timer = setTimeout(() => {
+      toast('Device stopped answering, reconnecting…', true);
+      if (ws) ws.close();  // onclose rejects everything pending, then reconnects and reloads
+    }, REPLY_TIMEOUT_MS);
+    pending.push(entry);
     ws.send(cmd);
     if (!quiet) logLine(cmd, 'tx');
   });
@@ -173,7 +185,10 @@ function onFrame(text) {
   for (const l of lines) handleLine(l, isReply);
   if (isReply) {
     const p = pending.shift();
-    if (p) p.resolve({ ok: last === 'ok', lines: lines.slice(0, -1), error: last });
+    if (p) {
+      clearTimeout(p.timer);
+      p.resolve({ ok: last === 'ok', lines: lines.slice(0, -1), error: last });
+    }
   }
 }
 
@@ -264,7 +279,8 @@ function bind(input, path) {
   bound.get(path).add(input);
   setInputValue(input, model.get(path));
   input.addEventListener('change', () => {
-    const v = input.type === 'checkbox' ? String(input.checked) : input.value.trim();
+    let v = input.type === 'checkbox' ? String(input.checked) : input.value.trim();
+    if (input.dataset.number !== undefined) v = v.replace(',', '.');  // decimal comma (e.g. German keyboards)
     setSetting(path, v);
   });
   return input;
@@ -322,7 +338,10 @@ function inputFor(path, name) {
   if (v === 'true' || v === 'false') return bind(el('input', { type: 'checkbox' }), path);
   if (/password/i.test(name)) return bind(el('input', { type: 'password', placeholder: 'unchanged', autocomplete: 'new-password' }), path);
   const numeric = /^-?[\d.]+$/.test(v || '') && !/^0x/i.test(v || '');
-  return bind(el('input', { type: 'text', inputmode: numeric ? 'decimal' : undefined, spellcheck: 'false' }), path);
+  return bind(el('input', {
+    type: 'text', spellcheck: 'false', 'data-number': numeric ? '' : undefined,
+    inputmode: numeric && !SIGNED_FIELDS.has(name) ? 'decimal' : undefined,
+  }), path);
 }
 
 function genericField(path, label) {
@@ -367,7 +386,7 @@ function renderCards() {
 
 function angleRow(label, path, i) {
   const range = el('input', { type: 'range', min: 0, max: num(sp(i, 'range_deg'), 180), step: 0.5 });
-  const box = el('input', { type: 'text', inputmode: 'decimal' });
+  const box = el('input', { type: 'text', inputmode: 'decimal', 'data-number': '' });
   bind(range, path);
   bind(box, path);
   range.addEventListener('input', () => { box.value = range.value; });
@@ -665,7 +684,7 @@ function setDefaultUpdateUrl(url) {
 }
 
 function showFwUrl() {
-  const host = $('#fwHost').value.trim();
+  const host = $('#fwHost').value.trim().replace(/,/g, '.');
   $('#fwUrl').textContent = updateUrlFor(host || '…');
 }
 
@@ -700,7 +719,7 @@ function confirmFirmwareUpdate(what) {
 }
 
 async function pullUpdate() {
-  const host = $('#fwHost').value.trim();
+  const host = $('#fwHost').value.trim().replace(/,/g, '.');
   if (!/^[\w.-]+$/.test(host)) { setFwStatus('Enter the IP address of the computer serving the firmware', true); return; }
   if (!confirmFirmwareUpdate(updateUrlFor(host))) return;
   setFwStatus('Starting…');
