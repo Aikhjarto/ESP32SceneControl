@@ -51,6 +51,7 @@ python3 tools/sim_server.py  # web UI against a desktop simulator: http://localh
 ```
 
 If `pio` is not on your PATH, it is usually `~/.platformio/penv/bin/pio`.
+For the first run on real hardware, follow [docs/hardware-checklist.md](docs/hardware-checklist.md).
 PlatformIO generates `sdkconfig.esp32dev` only once; after editing `sdkconfig.defaults`,
 delete it so it is regenerated.
 
