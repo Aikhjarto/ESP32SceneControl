@@ -298,7 +298,7 @@ Err Parser::command(const std::string& name, const std::string& value, bool hasV
         scene_.release(servo);
         return Err::Ok;
     }
-    return Err::UnknownCommand;
+    return host_.command(name, value, hasValue, out, msg);
 }
 
 void Parser::listSettings(const std::string& prefix, ReplySink& out) {
@@ -315,6 +315,7 @@ void Parser::help(ReplySink& out) {
         "[HLP:$Servo/Stop=n|* $Servo/Go=n|* $Servo/Test=n,deg $Servo/Release=n|*]",
         "[HLP:$/servo/n/<field>[=value]  $/scene/... $/pwm/... $/i2c/... $/pca/n/... $/button/...]",
         "[HLP:$AP/SSID $AP/Password $AP/Channel $AP/IP $AP/Captive $Hostname]",
+        "[HLP:$Firmware/Update[=url]  (default http://<first client>:9999/firmware.bin)]",
     };
     for (const char* l : kLines) out.line(l);
 }

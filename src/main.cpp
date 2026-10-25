@@ -9,6 +9,7 @@
 #include "esp_idf_version.h"
 #include "esp_log.h"
 #include "net/CaptiveDns.h"
+#include "net/Ota.h"
 #include "net/WebServer.h"
 #include "net/Wifi.h"
 #include "nvs_flash.h"
@@ -61,4 +62,6 @@ extern "C" void app_main() {
     net::startAccessPoint(net);
     if (net.captive) net::startCaptiveDns(net::apIp());
     net::startWebServer(net::apIp(), net.captive);
+
+    net::confirmFirmwareLater();  // after an OTA update: keep it only if it keeps running
 }

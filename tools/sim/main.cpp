@@ -47,11 +47,18 @@ struct SimHost : Host {
     void info(ReplySink& out) override {
         out.line("[VER:sim ESP32PWM]");
         out.line("[OPT:desktop simulator]");
+        out.line("[MSG:INFO: Firmware sim in ota_0 (simulator)]");
+        out.line("[UPDATE:http://127.0.0.1:9999/firmware.bin]");
         for (int i = 0; i < kMaxServos; ++i) {
             if (cfg.servo[i].pin.type == PinType::None) continue;
             out.line("[SERVO:" + std::to_string(i) + " " + Settings::formatPin(cfg.servo[i].pin) + " sim." +
                      std::to_string(i) + (cfg.servo[i].enable ? "" : " disabled") + "]");
         }
+    }
+    Err command(const std::string& name, const std::string&, bool, ReplySink&, std::string& msg) override {
+        if (name != "Firmware/Update") return Err::UnknownCommand;
+        msg = "Firmware updates need the real ESP32 (this is the simulator)";
+        return Err::BadValue;
     }
     void boot() {
         setDefaults(cfg);

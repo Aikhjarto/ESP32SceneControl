@@ -1,6 +1,7 @@
 #include "app/Commands.h"
 
 #include <cstring>
+#include <strings.h>
 
 #include "app/App.h"
 #include "app/MotionTask.h"
@@ -15,6 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "net/Ota.h"
 #include "net/WebServer.h"
 #include "net/Wifi.h"
 #include "soc/soc_caps.h"
@@ -73,13 +75,19 @@ public:
     bool save(const std::string& text, std::string& err) override { return persist::save(text, err); }
     bool erase(std::string& err) override { return persist::erase(err); }
 
-    void reboot() override {
-        // Delay so the "ok" still reaches the sender.
-        esp_timer_create_args_t ta = {};
-        ta.callback = [](void*) { esp_restart(); };
-        ta.name = "reboot";
-        esp_timer_handle_t t;
-        if (esp_timer_create(&ta, &t) == ESP_OK) esp_timer_start_once(t, 300000);
+    void reboot() override { restartSoon(); }
+
+    Err command(const std::string& name, const std::string& value, bool hasValue, ReplySink& out,
+                std::string& msg) override {
+        if (strcasecmp(name.c_str(), "Firmware/Update") != 0) return Err::UnknownCommand;
+        std::string url = hasValue && !value.empty() ? value : net::defaultUpdateUrl();
+        if (url.empty()) {
+            msg = "no client has joined the access point yet; use $Firmware/Update=http://<ip>:9999/firmware.bin";
+            return Err::BadValue;
+        }
+        if (!net::startOtaDownload(url, msg)) return Err::BadValue;
+        out.line("[OTA:start " + url + "]");
+        return Err::Ok;
     }
 
     void info(ReplySink& out) override {
@@ -92,6 +100,8 @@ public:
         snprintf(buf, sizeof(buf), "[OPT:ESP32 rev %d.%d, ESP-IDF %s]", chip.revision / 100, chip.revision % 100,
                  esp_get_idf_version());
         out.line(buf);
+        out.line(net::firmwareInfo());
+        if (!net::defaultUpdateUrl().empty()) out.line("[UPDATE:" + net::defaultUpdateUrl() + "]");
         if (!net::apSsid().empty()) {
             snprintf(buf, sizeof(buf), "[MSG:INFO: AP \"%s\" http://%s/ (%d WebSocket clients)]",
                      net::apSsid().c_str(), net::apIp().c_str(), net::wsClientCount());

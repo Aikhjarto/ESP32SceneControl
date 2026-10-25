@@ -16,5 +16,9 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_HTTPD_WS_SUPPORT=y
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 
-# HTTP server (7 clients + 2 internal) + captive DNS
+# HTTP server (7 clients + 2 internal) + captive DNS + OTA download
 CONFIG_LWIP_MAX_SOCKETS=16
+
+# OTA: a new image that resets before confirming itself is rolled back by the bootloader.
+# (Bootloader setting: takes effect after one serial flash.)
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

@@ -28,6 +28,12 @@ public:
     virtual bool erase(std::string& err) = 0;
     virtual void reboot() = 0;
     virtual void info(ReplySink& out) = 0;
+    // Device-specific $commands (e.g. $Firmware/Update); return UnknownCommand if not handled.
+    virtual Err command(const std::string& name, const std::string& value, bool hasValue, ReplySink& out,
+                        std::string& msg) {
+        (void)name, (void)value, (void)hasValue, (void)out, (void)msg;
+        return Err::UnknownCommand;
+    }
 };
 
 class Parser {

@@ -168,15 +168,17 @@ function realtime(c) {
 
 function onFrame(text) {
   const lines = text.split('\n').filter((l) => l.length);
-  for (const l of lines) handleLine(l);
   const last = lines[lines.length - 1] || '';
-  if (last === 'ok' || last.startsWith('error:')) {
+  const isReply = last === 'ok' || last.startsWith('error:');
+  for (const l of lines) handleLine(l, isReply);
+  if (isReply) {
     const p = pending.shift();
     if (p) p.resolve({ ok: last === 'ok', lines: lines.slice(0, -1), error: last });
   }
 }
 
-function handleLine(l) {
+// isReply: part of the answer to one of our commands (info lines are not toasted then).
+function handleLine(l, isReply = false) {
   if (l.startsWith('<')) {
     parseStatus(l);
     if (logStatusOnce) { logLine(l); logStatusOnce = false; }
@@ -191,16 +193,25 @@ function handleLine(l) {
   } else if (l.startsWith('[SERVO:')) {
     const m = /^\[SERVO:(\d+) (\S+) (.+)\]$/.exec(l);
     if (m) hwInfo[m[1]] = `${m[2]} → ${m[3]}`;
+  } else if (l.startsWith('[UPDATE:')) {
+    setDefaultUpdateUrl(l.slice(8, -1));
+  } else if (l.startsWith('[OTA:')) {
+    otaProgress(l.slice(5, -1));
+  } else if (l.startsWith('[MSG:INFO: Firmware ') && l.includes(' in ota_')) {
+    $('#fwVersion').textContent = l.slice(11, -1);
   } else if (muted) {
     // no toasts while (re)loading
   } else if (l.startsWith('[MSG:ERR:')) {
-    toast(l.slice(9, -1).trim(), true);
+    const msg = l.slice(9, -1).trim();
+    if (msg.startsWith('Firmware update failed')) setFwStatus(msg, true);
+    toast(msg, true);
   } else if (l.startsWith('[MSG:WARN:')) {
     toast(l.slice(10, -1).trim(), true);
   } else if (l.startsWith('[MSG:INFO:')) {
     const msg = l.slice(10, -1).trim();
     if (msg.startsWith('Restart required')) $('#restart').hidden = false;
-    else toast(msg);
+    else if (msg.startsWith('Firmware ') && msg.endsWith('restarting')) { setFwStatus(msg); toast(msg); }
+    else if (!isReply) toast(msg);
   }
 }
 
@@ -639,6 +650,85 @@ function consoleSend(line) {
 }
 
 // ---------------------------------------------------------------------------
+// Firmware update
+
+const UPDATE_PORT = 9999;
+let fwHostEdited = false;
+
+const updateUrlFor = (host) => `http://${host}:${UPDATE_PORT}/firmware.bin`;
+
+// [UPDATE:http://<first client>:9999/firmware.bin] from $I prefills the server address.
+function setDefaultUpdateUrl(url) {
+  const m = /^https?:\/\/([^:/]+)/.exec(url);
+  if (m && !fwHostEdited) $('#fwHost').value = m[1];
+  showFwUrl();
+}
+
+function showFwUrl() {
+  const host = $('#fwHost').value.trim();
+  $('#fwUrl').textContent = updateUrlFor(host || '…');
+}
+
+function setFwStatus(text, err = false) {
+  const s = $('#fwStatus');
+  s.textContent = text;
+  s.classList.toggle('err', err);
+  if (err) $('#fwProgress').hidden = true;
+}
+
+function setFwProgress(pct) {
+  const p = $('#fwProgress');
+  p.hidden = false;
+  p.value = pct;
+}
+
+// [OTA:start <url>] / [OTA:download 40%]
+function otaProgress(text) {
+  const m = /^download (\d+)%$/.exec(text);
+  if (m) {
+    setFwProgress(Number(m[1]));
+    setFwStatus(`Downloading and flashing… ${m[1]}%`);
+  } else if (text.startsWith('start ')) {
+    setFwProgress(0);
+    setFwStatus(`Fetching ${text.slice(6)}…`);
+  }
+}
+
+function confirmFirmwareUpdate(what) {
+  const unsaved = dirty ? '\n\nUnsaved setting changes will be lost when it restarts.' : '';
+  return confirm(`Install firmware from ${what}? The ESP restarts afterwards.${unsaved}`);
+}
+
+async function pullUpdate() {
+  const host = $('#fwHost').value.trim();
+  if (!/^[\w.-]+$/.test(host)) { setFwStatus('Enter the IP address of the computer serving the firmware', true); return; }
+  if (!confirmFirmwareUpdate(updateUrlFor(host))) return;
+  setFwStatus('Starting…');
+  const r = await send(`$Firmware/Update=${updateUrlFor(host)}`).catch(() => null);
+  if (!r) setFwStatus('Not connected', true);
+  else if (!r.ok) setFwStatus(r.lines.filter((l) => l.startsWith('[MSG:ERR:')).map((l) => l.slice(9, -1).trim()).join(' ') || r.error, true);
+}
+
+async function uploadFirmware(file) {
+  const head = new Uint8Array(await file.slice(0, 1).arrayBuffer());
+  if (head[0] !== 0xE9) { setFwStatus(`${file.name} is not an ESP32 firmware image`, true); return; }
+  if (!confirmFirmwareUpdate(file.name)) return;
+  setFwProgress(0);
+  setFwStatus(`Uploading ${file.name}…`);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/update');
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round((e.loaded / e.total) * 100);
+    setFwProgress(pct);
+    setFwStatus(pct < 100 ? `Uploading… ${pct}%` : 'Verifying signature and flashing…');
+  };
+  xhr.onload = () => setFwStatus(xhr.responseText || `HTTP ${xhr.status}`, xhr.status !== 200);
+  xhr.onerror = () => setFwStatus('Upload failed (connection lost)', true);
+  xhr.send(file);
+}
+
+// ---------------------------------------------------------------------------
 // UI glue
 
 let toastTimer = null;
@@ -759,6 +849,15 @@ function init() {
     toast('Config restored — press Save to keep it');
     loadAll();
   });
+
+  $('#fwHost').addEventListener('input', () => { fwHostEdited = true; showFwUrl(); });
+  $('#btnFwPull').addEventListener('click', pullUpdate);
+  $('#fwFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file) uploadFirmware(file);
+  });
+  showFwUrl();
 
   $('#consoleForm').addEventListener('submit', (e) => {
     e.preventDefault();

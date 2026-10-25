@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "net/Ota.h"
 
 extern const uint8_t index_html_gz_start[] asm("_binary_index_html_gz_start");
 extern const uint8_t index_html_gz_end[] asm("_binary_index_html_gz_end");
@@ -226,6 +227,12 @@ void startWebServer(const std::string& ip, bool captive) {
     cpost.method = HTTP_POST;
     cpost.handler = configPost;
     httpd_register_uri_handler(gServer, &cpost);
+
+    httpd_uri_t update = {};
+    update.uri = "/update";
+    update.method = HTTP_POST;
+    update.handler = otaUploadHandler;
+    httpd_register_uri_handler(gServer, &update);
 
     if (captive) {
         httpd_uri_t any = {};

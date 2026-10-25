@@ -67,6 +67,24 @@
   <section id="tab-settings" class="tab" hidden>
     <div id="settingsGroups"></div>
     <div class="panel">
+      <h2>Firmware</h2>
+      <p class="hint" id="fwVersion"></p>
+      <div class="fields">
+        <div class="field">
+          <label for="fwHost">Update server (computer running tools/serve_firmware.py)</label>
+          <input id="fwHost" inputmode="decimal" spellcheck="false" autocapitalize="off" placeholder="192.168.4.2">
+        </div>
+      </div>
+      <p class="hint">Fetches <code id="fwUrl">http://…:9999/firmware.bin</code></p>
+      <div class="row-buttons">
+        <button id="btnFwPull">Update from server</button>
+        <label class="button file">Upload .bin…<input id="fwFile" type="file" accept=".bin,application/octet-stream" hidden></label>
+      </div>
+      <progress id="fwProgress" max="100" value="0" hidden></progress>
+      <p class="hint" id="fwStatus"></p>
+      <p class="hint">Only images signed with the project key are accepted (firmware-signed.bin). The scene holds while flashing; a new firmware that resets within 10 s is rolled back automatically.</p>
+    </div>
+    <div class="panel">
       <h2>Backup &amp; maintenance</h2>
       <div class="row-buttons">
         <a class="button" href="/config.txt" download>Download config</a>

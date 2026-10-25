@@ -8,3 +8,4 @@ sdkconfig.*
 managed_components/
 dependencies.lock
 web/dist/
+__pycache__/

@@ -18,8 +18,24 @@ static const char* TAG = "wifi";
 static std::string gSsid;
 static std::string gIp;
 
+static uint32_t gFirstClient;  // network byte order, 0 = none yet
+
 const std::string& apSsid() { return gSsid; }
 const std::string& apIp() { return gIp; }
+
+std::string firstClientIp() {
+    if (!gFirstClient) return "";
+    esp_ip4_addr_t a = {gFirstClient};
+    char buf[16];
+    esp_ip4addr_ntoa(&a, buf, sizeof(buf));
+    return buf;
+}
+
+static void onIpAssigned(void*, esp_event_base_t, int32_t, void* data) {
+    auto* e = static_cast<ip_event_ap_staipassigned_t*>(data);
+    if (!gFirstClient) gFirstClient = e->ip.addr;
+    ESP_LOGI(TAG, "client got " IPSTR, IP2STR(&e->ip));
+}
 
 static void onWifiEvent(void*, esp_event_base_t, int32_t id, void* data) {
     if (id == WIFI_EVENT_AP_STACONNECTED) {
@@ -39,6 +55,7 @@ void startAccessPoint(const NetConfig& cfg) {
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, onWifiEvent, nullptr));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, onIpAssigned, nullptr));
 
     if (cfg.ssid[0]) {
         gSsid = cfg.ssid;

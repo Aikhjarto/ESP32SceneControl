@@ -103,6 +103,11 @@ async def config_post(request):
     return web.Response(text=await request.app["sim"].request("P " + f.name), content_type="text/plain")
 
 
+async def update_post(request):
+    await request.read()
+    return web.Response(status=501, text="Firmware upload needs the real ESP32 (this is the simulator)")
+
+
 def static(name, ctype):
     async def handler(_):
         return web.Response(body=(ROOT / "web" / name).read_bytes(), content_type=ctype,
@@ -130,6 +135,7 @@ def main():
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/config.txt", config_get)
     app.router.add_post("/config.txt", config_post)
+    app.router.add_post("/update", update_post)
     web.run_app(app, port=args.port)
 
 

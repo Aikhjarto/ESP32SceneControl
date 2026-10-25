@@ -20,6 +20,11 @@ struct FakeHost : Host {
     bool erase(std::string&) override { return erased = true, true; }
     void reboot() override { rebooted = true; }
     void info(ReplySink& out) override { out.line("[VER:test]"); }
+    Err command(const std::string& name, const std::string& value, bool, ReplySink& out, std::string&) override {
+        if (name != "Firmware/Update") return Err::UnknownCommand;
+        out.line("[OTA:start " + value + "]");
+        return Err::Ok;
+    }
 };
 
 struct Capture : ReplySink {
@@ -193,6 +198,13 @@ void test_realtime_characters() {
     TEST_ASSERT_EQUAL_STRING("<Hold|T:0.000|Cyc:0>", c.last().c_str());
 }
 
+void test_host_commands_extend_the_parser() {
+    Capture c = exec("$Firmware/Update=http://x/fw.bin");
+    TEST_ASSERT_EQUAL_STRING("[OTA:start http://x/fw.bin]", c.lines[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("ok", c.last().c_str());
+    TEST_ASSERT_EQUAL_STRING("error:3", exec("$Firmware/Nope").last().c_str());
+}
+
 void test_empty_line_and_help() {
     TEST_ASSERT_EQUAL_STRING("ok", exec("").last().c_str());
     Capture h = exec("$");
@@ -222,6 +234,7 @@ int main() {
     RUN_TEST(test_restore_defaults);
     RUN_TEST(test_scene_and_servo_commands);
     RUN_TEST(test_realtime_characters);
+    RUN_TEST(test_host_commands_extend_the_parser);
     RUN_TEST(test_empty_line_and_help);
     RUN_TEST(test_yaml_dump);
     return UNITY_END();

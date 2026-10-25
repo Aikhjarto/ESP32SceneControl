@@ -33,4 +33,7 @@ void broadcast(const std::string& text);
 // Problems found while bringing up outputs, shown by $I.
 std::string& bootLog();
 
+// Restart after a short delay, so the reply that triggered it still reaches the sender.
+void restartSoon();
+
 }  // namespace ss::app

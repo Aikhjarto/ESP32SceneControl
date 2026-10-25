@@ -44,7 +44,7 @@ At boot, servos are switched on one after another (`$/scene/stagger_ms`) to avoi
 PlatformIO with the ESP-IDF framework (`espressif32@6.9.0`, ESP-IDF 5.3.1).
 
 ```sh
-pio run                      # build
+pio run                      # build (also writes firmware-signed.bin for OTA)
 pio run -t upload -t monitor # flash and open the serial console
 pio test -e native           # unit tests on the PC (motion math, scene engine, parser)
 python3 tools/sim_server.py  # web UI against a desktop simulator: http://localhost:8080/
@@ -53,6 +53,50 @@ python3 tools/sim_server.py  # web UI against a desktop simulator: http://localh
 If `pio` is not on your PATH, it is usually `~/.platformio/penv/bin/pio`.
 PlatformIO generates `sdkconfig.esp32dev` only once; after editing `sdkconfig.defaults`,
 delete it so it is regenerated.
+
+## Over-the-air updates
+
+The ESP only installs firmware that is **signed with the project key**.
+- **Signature:** ECDSA P-256, in the format of Espressif's `espsecure.py sign_data --version 1`.
+- **Serial flashing is not affected.** No eFuses or Secure Boot are involved, so `pio run -t upload` always works, with any image.
+- **Rollback:** a new firmware has to run for 10 s before it is confirmed. If it crashes or resets earlier, the bootloader switches back to the previous one.
+- **During the update:** the scene holds while flash is written. If the update fails, the scene resumes.
+
+**Keys**
+
+| File | Role |
+|---|---|
+| `~/.config/esp32pwm/ota_signing_key.pem` | Private key. Stays outside the repo. **Back it up.** Set a different path with `custom_ota_signing_key` in `platformio.ini` or `$ESP32PWM_OTA_KEY`. |
+| `keys/ota_verify_key.bin` | Public key, committed. Embedded in the firmware and refreshed from the private key on every build. |
+
+Every `pio run` writes two files to `.pio/build/esp32dev/`:
+- `firmware.bin`: unsigned, used for serial flashing
+- `firmware-signed.bin`: signed, used for OTA
+
+To create a new key, use any Python with the `cryptography` package, e.g. ESP-IDF's environment:
+
+```sh
+~/.platformio/penv/.espidf-5.3.1/bin/python scripts/ota_sign_tool.py genkey ~/.config/esp32pwm/ota_signing_key.pem
+```
+
+`scripts/ota_sign_tool.py` can also `sign` and `verify` images by hand.
+
+Then flash once over serial, because the firmware embeds the matching public key.
+If the key is lost, you can still flash over serial, then use a new key.
+
+**Updating from your computer (pull):**
+1. Join the ESP's WiFi with the computer.
+2. Start the server: run the VS Code task **OTA: serve firmware (port 9999)**, which builds first. Or run `python3 tools/serve_firmware.py`.
+3. In the web UI open Settings → Firmware and press **Update from server**. Or send `$Firmware/Update` over serial.
+
+The address field is prefilled with the first client that joined the access point. The ESP fetches
+`http://<that address>:9999/firmware.bin`. `$Firmware/Update=<url>` lets you choose any URL.
+Your firewall must allow incoming TCP on port 9999 (e.g. `sudo firewall-cmd --add-port=9999/tcp`).
+
+**Uploading from the browser (push):** Settings → Firmware → **Upload .bin…** and choose
+`firmware-signed.bin` (`POST /update`).
+
+`$I` shows the running version and slot, and what the other slot holds.
 
 ## First use
 
@@ -116,6 +160,7 @@ plus a `[MSG:ERR: reason]` line before it. Realtime characters act at once and g
 | `$Servo/Test=n,deg` | Drive servo n to an angle at up to `max_dps` (calibration) |
 | `$Servo/Release=n` | Leave test mode and rejoin the scene (`*` = all) |
 | `$Positions` | Current output angles, e.g. `[POS:0=45.0,1=90.5]` |
+| `$Firmware/Update[=url]` | Download and install signed firmware (default `http://<first client>:9999/firmware.bin`); progress as `[OTA:download 40%]` |
 
 Error codes: 2 bad value, 3 unknown command, 4 out of range, 5 unknown setting,
 6 servo not enabled, 7 flash write failed.
@@ -189,8 +234,10 @@ src/core/      portable logic, unit-tested on the PC
   Parser       FluidNC-style command parser (serial, WebSocket, boot replay)
 src/out/       LEDC / MCPWM / PCA9685 drivers and the channel allocator
 src/app/       shared state and lock, 50 Hz motion task + button, command executor, NVS
-src/net/       WiFi access point, web server + WebSocket, captive DNS
+src/net/       WiFi access point, web server + WebSocket, captive DNS, OTA + signature check
 web/           UI (embedded gzipped at build time by scripts/embed_web.py)
+keys/          public OTA verification key (scripts/ota_sign.py keeps it in sync and signs builds)
 test/          native unit tests
-tools/         desktop simulator + UI server
+tools/         desktop simulator + UI server, OTA firmware server
+.vscode/       tasks: OTA build + serve, web UI simulator
 ```
