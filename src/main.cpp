@@ -8,6 +8,9 @@
 #include "esp_flash.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
+#include "net/CaptiveDns.h"
+#include "net/WebServer.h"
+#include "net/Wifi.h"
 #include "nvs_flash.h"
 
 static const char* TAG = "main";
@@ -53,4 +56,9 @@ extern "C" void app_main() {
     app::outputs().begin(app::config(), app::bootLog());
     app::startMotion();
     app::startCommands();
+
+    const NetConfig net = app::config().net;
+    net::startAccessPoint(net);
+    if (net.captive) net::startCaptiveDns(net::apIp());
+    net::startWebServer(net::apIp(), net.captive);
 }

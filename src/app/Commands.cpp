@@ -15,6 +15,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "net/WebServer.h"
+#include "net/Wifi.h"
 #include "soc/soc_caps.h"
 
 namespace ss::app {
@@ -90,6 +92,11 @@ public:
         snprintf(buf, sizeof(buf), "[OPT:ESP32 rev %d.%d, ESP-IDF %s]", chip.revision / 100, chip.revision % 100,
                  esp_get_idf_version());
         out.line(buf);
+        if (!net::apSsid().empty()) {
+            snprintf(buf, sizeof(buf), "[MSG:INFO: AP \"%s\" http://%s/ (%d WebSocket clients)]",
+                     net::apSsid().c_str(), net::apIp().c_str(), net::wsClientCount());
+            out.line(buf);
+        }
 
         Locked l;
         const Config& cfg = config();

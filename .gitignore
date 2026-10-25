@@ -7,3 +7,4 @@ sdkconfig.*
 .vscode/ipch
 managed_components/
 dependencies.lock
+web/dist/
