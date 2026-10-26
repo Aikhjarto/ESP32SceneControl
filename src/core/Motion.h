@@ -22,6 +22,15 @@ inline float blendCurve(float u) {
     return u * u * u * (10 + u * (-15 + 6 * u));
 }
 
+// Offset that decays from (position e0, speed e1) at u = 0 to zero at u = 1 over durS
+// seconds, with zero speed and acceleration at the end (quintic Hermite basis).
+inline float settleOffset(float e0, float e1, float durS, float u) {
+    const float u2 = u * u, u3 = u2 * u;
+    const float h0 = 1 + u3 * (-10 + u * (15 - 6 * u));      // 1 -> 0
+    const float h1 = u + u3 * (-6 + u * (8 - 3 * u));        // slope 1 -> 0
+    return e0 * h0 + e1 * durS * h1;
+}
+
 // Time in ms one servo occupies within a scene cycle (delay included); 0 for ping-pong,
 // which runs independent of the cycle.
 uint32_t servoCycleMs(const ServoConfig& s);

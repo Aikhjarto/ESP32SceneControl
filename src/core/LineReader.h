@@ -11,7 +11,7 @@ namespace ss {
 
 class LineReader {
 public:
-    enum class Event { None, Realtime, Line };
+    enum class Event { None, Realtime, Line, TooLong };  // TooLong: line discarded
 
     explicit LineReader(size_t maxLine = 256) : maxLine_(maxLine) {}
 
@@ -26,6 +26,7 @@ private:
     std::string line_;
     char realtime_ = 0;
     bool lastWasCr_ = false;
+    bool overflow_ = false;
 };
 
 }  // namespace ss

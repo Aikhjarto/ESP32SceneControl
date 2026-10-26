@@ -253,11 +253,43 @@ void test_restore_resets_settings_not_in_backup() {
     exec("$/servo/1/start_deg=10");
     exec("$AP/Channel=11");
     Capture c;
-    parser->restore(backup, c);
+    TEST_ASSERT_TRUE(parser->restore(backup, c));
     TEST_ASSERT_EQUAL_FLOAT(45, cfg.servo[1].startDeg);
     TEST_ASSERT_EQUAL_UINT32(1000, cfg.servo[1].delayMs);
     TEST_ASSERT_EQUAL_UINT32(6, cfg.net.channel);
     TEST_ASSERT_TRUE(c.hasPrefix("[MSG:INFO: Restart required to apply the restored config]"));
+}
+
+// Third review: an empty or wrong file must not wipe the live configuration.
+void test_bad_restore_changes_nothing() {
+    exec("$/servo/1/start_deg=10");
+    exec("$AP/SSID=Stage");
+    for (const char* text : {"", "\n\n", "hello world\n", "$/servo/1/delay_ms=500\n$/servo/1/bogus=1\n"}) {
+        Capture c;
+        TEST_ASSERT_FALSE(parser->restore(text, c));
+        TEST_ASSERT_TRUE(c.hasPrefix("[MSG:ERR:"));
+        TEST_ASSERT_EQUAL_FLOAT(10, cfg.servo[1].startDeg);
+        TEST_ASSERT_EQUAL_UINT32(defaultConfig().servo[1].delayMs, cfg.servo[1].delayMs);
+        TEST_ASSERT_EQUAL_STRING("Stage", cfg.net.ssid);
+    }
+}
+
+// Restart-only settings are compared with the booted configuration, not the one before
+// the restore.
+void test_restore_restart_hint_uses_boot_config() {
+    parser->markBooted();                  // booted with channel 6
+    exec("$AP/Channel=11");                // changed since (restart pending)
+    Capture c;
+    TEST_ASSERT_TRUE(parser->restore("$/servo/1/delay_ms=500\n", c));  // back to channel 6
+    TEST_ASSERT_FALSE(c.hasPrefix("[MSG:INFO: Restart required"));
+}
+
+void test_serial_overlong_line_is_rejected() {
+    LineReader r(8);
+    for (char ch : std::string("$/servo/0/name=abcdefgh")) r.feed(ch);
+    TEST_ASSERT_EQUAL(static_cast<int>(LineReader::Event::TooLong), static_cast<int>(r.feed('\n')));
+    for (char ch : std::string("$I")) r.feed(ch);
+    TEST_ASSERT_EQUAL(static_cast<int>(LineReader::Event::Line), static_cast<int>(r.feed('\n')));
 }
 
 void test_short_scene_period_warns() {
@@ -306,6 +338,9 @@ int main() {
     RUN_TEST(test_serial_realtime_chars_are_literal_inside_values);
     RUN_TEST(test_serial_value_needs_dollar_line);
     RUN_TEST(test_restore_resets_settings_not_in_backup);
+    RUN_TEST(test_bad_restore_changes_nothing);
+    RUN_TEST(test_restore_restart_hint_uses_boot_config);
+    RUN_TEST(test_serial_overlong_line_is_rejected);
     RUN_TEST(test_short_scene_period_warns);
     RUN_TEST(test_unusable_ap_addresses_are_rejected);
     RUN_TEST(test_empty_line_and_help);

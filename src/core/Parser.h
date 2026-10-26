@@ -3,6 +3,7 @@
 // preceded by output lines); realtime characters (! ~ ? Ctrl-X) are handled separately.
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include "core/Config.h"
@@ -47,8 +48,11 @@ public:
 
     // Runs saved "$/path=value" lines at boot. Only failures are reported.
     void replay(const std::string& text, ReplySink& out);
-    // Restores a backup: defaults first (a backup lists only non-default settings), then replay.
-    void restore(const std::string& text, ReplySink& out);
+    // Restores a backup: defaults plus the backup's settings (a backup lists only non-default
+    // settings). Applied only if every line is valid; otherwise nothing changes (false).
+    bool restore(const std::string& text, ReplySink& out);
+    // Remembers the configuration the device booted with (restart-only settings use it).
+    void markBooted();
 
     Settings& settings() { return settings_; }
 
@@ -73,6 +77,7 @@ private:
     Host& host_;
     Settings settings_;
     bool replaying_ = false;
+    std::unique_ptr<Config> bootCfg_;
 };
 
 }  // namespace ss

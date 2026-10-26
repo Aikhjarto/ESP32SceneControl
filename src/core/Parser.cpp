@@ -197,19 +197,65 @@ void Parser::warnShortPeriod(ReplySink& out) {
     if (!list.empty()) out.line("[MSG:WARN: scene period is shorter than the cycle of servos " + list + "]");
 }
 
-void Parser::restore(const std::string& text, ReplySink& out) {
+bool Parser::restore(const std::string& text, ReplySink& out) {
+    // Build the restored configuration separately - from the defaults, since a backup lists
+    // only non-default settings - and apply it only if every line is a valid setting, so a
+    // wrong or empty file leaves the live configuration untouched.
+    auto next = std::make_unique<Config>();
+    setDefaults(*next);
+    Settings target(*next);
+    int applied = 0, failed = 0;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        const std::string line = trim(text.substr(pos, nl - pos));
+        pos = nl + 1;
+        if (line.empty()) continue;
+        std::string err;
+        const size_t eq = line.find('=');
+        SettingRef ref;
+        if (line[0] != '$' || eq == std::string::npos) {
+            err = "not a $setting=value line";
+        } else if (!target.find(trim(line.substr(1, eq - 1)), ref)) {
+            err = "unknown setting";
+        } else {
+            target.set(ref, trim(line.substr(eq + 1)), err);
+        }
+        if (err.empty()) {
+            ++applied;
+        } else {
+            ++failed;
+            out.line("[MSG:ERR: " + line + ": " + err + "]");
+        }
+    }
+    if (failed > 0) {
+        out.line("[MSG:ERR: Restore rejected, nothing was changed]");
+        return false;
+    }
+    if (applied == 0) {
+        out.line("[MSG:ERR: The file contains no settings, nothing was changed (use Factory defaults to reset)]");
+        return false;
+    }
+
     Guard g(host_);
-    // A backup lists only non-default settings, so start from the defaults.
-    auto before = std::make_unique<Config>(cfg_);
-    setDefaults(cfg_);
-    replay(text, out);
+    // Restart-only settings take effect at boot, so compare with what the device booted with.
+    const Config& booted = bootCfg_ ? *bootCfg_ : cfg_;
     bool needsRestart = false;
-    settings_.forEachAll([&](const SettingRef& r) {
-        if ((r.field->flags & kReboot) && !settings_.equals(r, *before)) needsRestart = true;
+    target.forEachAll([&](const SettingRef& r) {
+        if ((r.field->flags & kReboot) && !target.equals(r, booted)) needsRestart = true;
     });
+    cfg_ = *next;
     scene_.rejoin(-1);
+    out.line("[MSG:INFO: Config restored (" + std::to_string(applied) + " settings)]");
     if (needsRestart) out.line("[MSG:INFO: Restart required to apply the restored config]");
     warnShortPeriod(out);
+    return true;
+}
+
+void Parser::markBooted() {
+    Guard g(host_);
+    bootCfg_ = std::make_unique<Config>(cfg_);
 }
 
 Err Parser::servoArg(const std::string& value, int& servo, bool allowAll, std::string& msg) const {

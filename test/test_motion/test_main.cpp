@@ -265,6 +265,33 @@ void test_period_switch_keeps_velocity_continuous() {
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, targetDeg(cfg.servo[0], sc.timeUs(), sc.periodMs()), sc.output(0));
 }
 
+// Third review: a second period change during a settle restarted it from standstill.
+// Speed must stay continuous across both changes, and the servo is listed while settling.
+void test_repeated_period_changes_keep_speed() {
+    cfg.scene.periodMs = 0;
+    cfg.servo[1].enable = true;
+    cfg.servo[1].delayMs = 1250;
+    Scene sc(cfg);
+    sc.setRunning(true);
+    run(sc, 3750 * 3 + 300);
+    float maxJerkStep = 0;  // largest change of per-tick step (deg/tick^2)
+    float prev = sc.output(0);
+    sc.tick(20000);
+    float prevStep = sc.output(0) - prev;
+    prev = sc.output(0);
+    for (int k = 0; k < 60; ++k) {
+        if (k == 0) cfg.servo[1].delayMs = 1500;
+        if (k == 15) cfg.servo[1].delayMs = 1700;  // second change 300 ms later
+        sc.tick(20000);
+        if (k == 1) TEST_ASSERT_TRUE(sc.status().find("Rejoin:0") != std::string::npos);
+        float step = sc.output(0) - prev;
+        maxJerkStep = std::fmax(maxJerkStep, std::fabs(step - prevStep));
+        prevStep = step;
+        prev = sc.output(0);
+    }
+    TEST_ASSERT_TRUE(maxJerkStep < 1.0f);  // a stall would change the step by ~2 deg at once
+}
+
 void test_servos_without_hardware_do_not_set_the_period() {
     cfg.scene.periodMs = 0;
     cfg.servo[1].enable = true;
@@ -306,6 +333,7 @@ int main() {
     RUN_TEST(test_period_change_does_not_make_other_servos_jump);
     RUN_TEST(test_period_change_keeps_moving_servos_on_target);
     RUN_TEST(test_period_switch_keeps_velocity_continuous);
+    RUN_TEST(test_repeated_period_changes_keep_speed);
     RUN_TEST(test_servos_without_hardware_do_not_set_the_period);
     RUN_TEST(test_status_lists_states);
     return UNITY_END();

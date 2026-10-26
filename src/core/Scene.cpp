@@ -11,9 +11,10 @@ namespace ss {
 static constexpr int64_t kMaxRejoinUs = 10'000'000;
 
 void Scene::tick(int64_t dtUs) {
-    if (running_) tUs_ += dtUs;
+    const int64_t sceneDtUs = running_ ? dtUs : 0;
+    tUs_ += sceneDtUs;
     // A new cycle length (automatic period after editing any servo, or $/scene/period_ms)
-    // shifts the timeline of every return-mode servo: they switch over smoothly.
+    // shifts the timeline of every return-mode servo: they settle onto it smoothly.
     const uint32_t prevPeriod = periodMs_;
     periodMs_ = effectivePeriodMs(cfg_, present_);
     const bool periodChanged = prevPeriod != 0 && periodMs_ != prevPeriod;
@@ -28,6 +29,7 @@ void Scene::tick(int64_t dtUs) {
         const float tgt = targetDeg(s, tUs_, periodMs_);
         if (!st.valid) {  // first output after boot: position unknown, start on target
             st.out = tgt;
+            st.vel = 0;
             st.valid = st.active = true;
             continue;
         }
@@ -35,9 +37,10 @@ void Scene::tick(int64_t dtUs) {
             st.active = true;
             startRejoin(i);
         } else if (periodChanged && s.mode == Mode::Return) {
-            startPeriodSwitch(i, prevPeriod);
+            startRejoin(i);
         }
 
+        const float prev = st.out;
         if (st.testing) {
             float diff = st.testDeg - st.out;
             float step = s.maxDps > 0 ? s.maxDps * dtUs / 1e6f : std::fabs(diff);
@@ -50,61 +53,53 @@ void Scene::tick(int64_t dtUs) {
                 st.rejoining = false;
                 st.out = tgt;
             } else {
-                st.out = st.from + (tgt - st.from) * blendCurve(u);
-            }
-        } else if (st.switching) {
-            // Blend between the old and the new trajectory: velocity stays continuous, and
-            // where both agree (e.g. in the first cycle) the output is exactly unchanged.
-            float u = st.durUs > 0 ? static_cast<float>(tUs_ - st.t0Us) / st.durUs : 1;
-            if (u >= 1) {
-                st.switching = false;
-                st.out = tgt;
-            } else {
-                const float old = targetDeg(s, tUs_, st.oldPeriodMs);
-                st.out = old + (tgt - old) * blendCurve(u);
+                st.out = tgt + settleOffset(st.e0, st.e1, st.durUs / 1e6f, u);
             }
         } else {
             st.out = tgt;
         }
+        st.vel = dtUs > 0 ? (st.out - prev) * 1e6f / dtUs : 0;
     }
+    outTimeUs_ = tUs_;
+    outDtUs_ = sceneDtUs;
 }
 
 int64_t Scene::blendDurationUs(const ServoConfig& s, float distDeg) const {
-    // Long enough that the blend's own correction stays below the servo's speed limit.
+    // Long enough that the correction itself stays below the servo's speed limit.
     int64_t durUs = static_cast<int64_t>(cfg_.scene.rejoinMs) * 1000;
     if (s.maxDps > 0) durUs = std::max(durUs, static_cast<int64_t>(1.875f * distDeg / s.maxDps * 1e6f));
     return std::min(durUs, kMaxRejoinUs);
 }
 
-void Scene::startPeriodSwitch(int servo, uint32_t oldPeriodMs) {
-    ServoState& st = st_[servo];
-    if (!st.valid || st.stopped || st.testing) return;  // they rejoin when released anyway
-    if (st.rejoining || st.switching) {                   // already blending: settle from here
-        startRejoin(servo);
-        return;
-    }
-    const ServoConfig& s = cfg_.servo[servo];
-    float dist = std::fabs(targetDeg(s, tUs_, oldPeriodMs) - targetDeg(s, tUs_, periodMs_));
-    st.oldPeriodMs = oldPeriodMs;
-    st.durUs = blendDurationUs(s, dist);
-    st.t0Us = tUs_;
-    st.switching = true;
+// Target speed at scene time t, measured over the same interval as the output speed, so
+// that a servo exactly on its target has no speed difference to settle.
+float Scene::targetVelocity(const ServoConfig& s, int64_t tUs) const {
+    const uint32_t period = periodMs_ ? periodMs_ : effectivePeriodMs(cfg_, present_);
+    const int64_t h = outDtUs_ > 0 ? outDtUs_ : 1000;
+    const int64_t t1 = outDtUs_ > 0 ? tUs : tUs + h / 2;
+    return (targetDeg(s, t1, period) - targetDeg(s, t1 - h, period)) * 1e6f / h;
 }
 
+// Settle onto the target from wherever the servo is, keeping its current speed: the output
+// becomes target + offset, and the offset (position and speed difference at the start)
+// decays to zero with zero speed and acceleration at the end. Used after Go, Release,
+// reset, re-enabling, edits and scene-period changes - also when one starts mid-settle.
 void Scene::startRejoin(int servo) {
     ServoState& st = st_[servo];
     if (!st.valid || st.stopped || st.testing) return;
     const ServoConfig& s = cfg_.servo[servo];
-    float dist = std::fabs(targetDeg(s, tUs_, periodMs_ ? periodMs_ : effectivePeriodMs(cfg_, present_)) - st.out);
-    st.durUs = blendDurationUs(s, dist);
-    st.from = st.out;
-    st.t0Us = tUs_;
+    const uint32_t period = periodMs_ ? periodMs_ : effectivePeriodMs(cfg_, present_);
+    // Anchor at the time the current output belongs to.
+    st.e0 = st.out - targetDeg(s, outTimeUs_, period);
+    st.e1 = (running_ ? st.vel : 0) - targetVelocity(s, outTimeUs_);
+    st.durUs = blendDurationUs(s, std::fabs(st.e0));
+    st.t0Us = outTimeUs_;
     st.rejoining = true;
-    st.switching = false;
 }
 
 void Scene::reset() {
     tUs_ = 0;
+    outTimeUs_ = 0;  // outputs now continue from scene time 0
     for (int i = 0; i < kMaxServos; ++i) startRejoin(i);
 }
 
@@ -124,7 +119,6 @@ void Scene::test(int servo, float deg) {
     st.testing = true;
     st.testDeg = deg;
     st.rejoining = false;
-    st.switching = false;
 }
 
 void Scene::release(int servo) {
