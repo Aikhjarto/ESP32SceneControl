@@ -227,6 +227,55 @@ void test_period_change_does_not_make_other_servos_jump() {
     }
 }
 
+// Second review: a period change must not stall servos whose trajectory is unchanged.
+// In the first cycle the old and new timelines agree, so output must stay exactly on target
+// with no speed drop.
+void test_period_change_keeps_moving_servos_on_target() {
+    cfg.scene.periodMs = 0;
+    cfg.servo[1].enable = true;
+    cfg.servo[1].delayMs = 1250;  // period 3750 ms
+    Scene sc(cfg);
+    sc.setRunning(true);
+    run(sc, 300);  // servo 0 is mid-move (bell, 0 -> 90 deg in 1 s)
+    cfg.servo[1].delayMs = 1300;  // period 3800 ms
+    for (int k = 0; k < 40; ++k) {
+        sc.tick(20000);
+        TEST_ASSERT_FLOAT_WITHIN(1e-3f, targetDeg(cfg.servo[0], sc.timeUs(), sc.periodMs()), sc.output(0));
+    }
+}
+
+// A switch later in the scene, when old and new timelines differ, keeps the speed continuous:
+// the first step after the change equals the step the servo was already taking.
+void test_period_switch_keeps_velocity_continuous() {
+    cfg.scene.periodMs = 0;
+    cfg.servo[1].enable = true;
+    cfg.servo[1].delayMs = 1250;
+    Scene sc(cfg);
+    sc.setRunning(true);
+    run(sc, 3750 * 3 + 400);  // fourth cycle, servo 0 moving
+    float a = sc.output(0);
+    sc.tick(20000);
+    float before = sc.output(0) - a;
+    cfg.servo[1].delayMs = 1500;  // period 4000 ms: servo 0's timeline shifts
+    float b = sc.output(0);
+    sc.tick(20000);
+    float after = sc.output(0) - b;
+    TEST_ASSERT_FLOAT_WITHIN(0.2f, before, after);
+    run(sc, 2000);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, targetDeg(cfg.servo[0], sc.timeUs(), sc.periodMs()), sc.output(0));
+}
+
+void test_servos_without_hardware_do_not_set_the_period() {
+    cfg.scene.periodMs = 0;
+    cfg.servo[1].enable = true;
+    cfg.servo[1].delayMs = 9000;
+    Scene sc(cfg);
+    sc.setPresent(1, false);
+    sc.tick(20000);
+    TEST_ASSERT_EQUAL_UINT32(2500, sc.periodMs());
+    TEST_ASSERT_FALSE(sc.hasOutput(1));
+}
+
 void test_status_lists_states() {
     Scene sc(cfg);
     cfg.servo[3].enable = true;
@@ -255,6 +304,9 @@ int main() {
     RUN_TEST(test_rejoin_is_frozen_by_global_hold);
     RUN_TEST(test_test_mode_is_speed_limited_and_releases_with_rejoin);
     RUN_TEST(test_period_change_does_not_make_other_servos_jump);
+    RUN_TEST(test_period_change_keeps_moving_servos_on_target);
+    RUN_TEST(test_period_switch_keeps_velocity_continuous);
+    RUN_TEST(test_servos_without_hardware_do_not_set_the_period);
     RUN_TEST(test_status_lists_states);
     return UNITY_END();
 }

@@ -1,6 +1,7 @@
 // Assembles a serial byte stream into command lines. Realtime characters (! ~ ? Ctrl-X)
 // act immediately, except ! ~ ? inside the value of a "$name=value" line, where they are
-// ordinary text (so passwords and servo names may contain them).
+// ordinary text (so passwords and servo names may contain them). Only a line starting with
+// '$' has a value, so stray input without '$' never disables the serial stop.
 #pragma once
 
 #include <cstddef>

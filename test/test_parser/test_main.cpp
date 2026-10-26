@@ -240,6 +240,39 @@ void test_serial_realtime_chars_are_literal_inside_values() {
     TEST_ASSERT_EQUAL_STRING("L:", ev[1].c_str());
 }
 
+void test_serial_value_needs_dollar_line() {
+    auto ev = readSerial("x=1!");  // noise containing '=' must not swallow the stop
+    TEST_ASSERT_EQUAL_STRING("R:!", ev.back().c_str());
+}
+
+// Second review: a backup lists only non-default settings, so restoring must start from
+// the defaults, or settings changed after the backup would survive the restore.
+void test_restore_resets_settings_not_in_backup() {
+    exec("$/servo/1/delay_ms=1000");
+    std::string backup = parser->settings().dumpChanged();
+    exec("$/servo/1/start_deg=10");
+    exec("$AP/Channel=11");
+    Capture c;
+    parser->restore(backup, c);
+    TEST_ASSERT_EQUAL_FLOAT(45, cfg.servo[1].startDeg);
+    TEST_ASSERT_EQUAL_UINT32(1000, cfg.servo[1].delayMs);
+    TEST_ASSERT_EQUAL_UINT32(6, cfg.net.channel);
+    TEST_ASSERT_TRUE(c.hasPrefix("[MSG:INFO: Restart required to apply the restored config]"));
+}
+
+void test_short_scene_period_warns() {
+    Capture c = exec("$/scene/period_ms=2000");  // default servos need up to 11250 ms
+    TEST_ASSERT_TRUE(c.hasPrefix("[MSG:WARN: scene period is shorter than the cycle of servos 0,"));
+    TEST_ASSERT_EQUAL_STRING("ok", c.last().c_str());
+}
+
+void test_unusable_ap_addresses_are_rejected() {
+    for (const char* ip : {"0.0.0.0", "192.168.4.0", "192.168.4.255", "127.0.0.1", "224.0.0.1"}) {
+        TEST_ASSERT_EQUAL_STRING("error:2", exec(std::string("$AP/IP=") + ip).last().c_str());
+    }
+    TEST_ASSERT_EQUAL_STRING("ok", exec("$AP/IP=10.42.0.1").last().c_str());
+}
+
 void test_empty_line_and_help() {
     TEST_ASSERT_EQUAL_STRING("ok", exec("").last().c_str());
     Capture h = exec("$");
@@ -271,6 +304,10 @@ int main() {
     RUN_TEST(test_realtime_characters);
     RUN_TEST(test_host_commands_extend_the_parser);
     RUN_TEST(test_serial_realtime_chars_are_literal_inside_values);
+    RUN_TEST(test_serial_value_needs_dollar_line);
+    RUN_TEST(test_restore_resets_settings_not_in_backup);
+    RUN_TEST(test_short_scene_period_warns);
+    RUN_TEST(test_unusable_ap_addresses_are_rejected);
     RUN_TEST(test_empty_line_and_help);
     RUN_TEST(test_yaml_dump);
     return UNITY_END();

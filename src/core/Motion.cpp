@@ -62,11 +62,12 @@ uint32_t servoCycleMs(const ServoConfig& s) {
     }
 }
 
-uint32_t effectivePeriodMs(const Config& cfg) {
+uint32_t effectivePeriodMs(const Config& cfg, const bool* present) {
     if (cfg.scene.periodMs > 0) return cfg.scene.periodMs;
     uint32_t longest = 0;
-    for (const ServoConfig& s : cfg.servo) {
-        if (servoActive(s)) longest = std::max(longest, servoCycleMs(s));
+    for (int i = 0; i < kMaxServos; ++i) {
+        const ServoConfig& s = cfg.servo[i];
+        if (servoActive(s) && (!present || present[i])) longest = std::max(longest, servoCycleMs(s));
     }
     return std::max<uint32_t>(longest, 100);
 }

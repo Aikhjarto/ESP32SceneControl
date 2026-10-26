@@ -27,7 +27,8 @@ inline float blendCurve(float u) {
 uint32_t servoCycleMs(const ServoConfig& s);
 
 // Scene cycle length: the configured period, or the longest servo cycle when periodMs is 0.
-uint32_t effectivePeriodMs(const Config& cfg);
+// present (optional, kMaxServos entries) excludes servos without hardware.
+uint32_t effectivePeriodMs(const Config& cfg, const bool* present = nullptr);
 
 // Target angle of a servo at scene time tUs, a pure function of the scene clock.
 float targetDeg(const ServoConfig& s, int64_t tUs, uint32_t periodMs);

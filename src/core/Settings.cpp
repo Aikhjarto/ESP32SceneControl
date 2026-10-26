@@ -22,11 +22,15 @@ static bool validatePassword(const char* v, std::string& msg) {
     return false;
 }
 
+// The AP uses a /24 network with the ESP as gateway, so the host part must be 1..254 and
+// the address must be a usable unicast one (otherwise DHCP fails and phones can't connect).
 static bool validateIp(const char* v, std::string& msg) {
     unsigned a, b, c, d;
     char tail;
     if (std::sscanf(v, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) == 4 && a < 256 && b < 256 && c < 256 && d < 256) {
-        return true;
+        if (a != 0 && a != 127 && a < 224 && d != 0 && d != 255) return true;
+        msg = "not usable for the access point (needs a unicast address with host part 1..254, e.g. 192.168.4.1)";
+        return false;
     }
     msg = "expected an IPv4 address like 192.168.4.1";
     return false;
@@ -364,16 +368,32 @@ Err Settings::set(const SettingRef& ref, const std::string& value, std::string& 
     return Err::Ok;
 }
 
-bool Settings::isDefault(const SettingRef& ref) const {
+bool Settings::equals(const SettingRef& ref, const Config& other) const {
     const uint8_t* cur = ptr(ref, static_cast<const Config&>(cfg_));
-    const uint8_t* def = ptr(ref, defaultConfig());
+    const uint8_t* oth = ptr(ref, other);
     if (ref.field->type == FieldType::Str) {
-        return std::strncmp(reinterpret_cast<const char*>(cur), reinterpret_cast<const char*>(def), ref.field->size) == 0;
+        return std::strncmp(reinterpret_cast<const char*>(cur), reinterpret_cast<const char*>(oth), ref.field->size) == 0;
     }
     if (ref.field->type == FieldType::Pin) {
-        return *reinterpret_cast<const PinSpec*>(cur) == *reinterpret_cast<const PinSpec*>(def);
+        return *reinterpret_cast<const PinSpec*>(cur) == *reinterpret_cast<const PinSpec*>(oth);
     }
-    return std::memcmp(cur, def, ref.field->size) == 0;
+    return std::memcmp(cur, oth, ref.field->size) == 0;
+}
+
+void Settings::forEachAll(const std::function<void(const SettingRef&)>& fn) const {
+    for (const GroupDesc& g : kGroups) {
+        int count = g.count > 0 ? g.count : 1;
+        for (int i = 0; i < count; ++i) {
+            for (int f = 0; f < g.fieldCount; ++f) {
+                SettingRef ref;
+                ref.group = &g;
+                ref.index = i;
+                ref.field = &g.fields[f];
+                ref.named = g.name ? nullptr : g.fields[f].name;
+                fn(ref);
+            }
+        }
+    }
 }
 
 // True if `path` lies inside `prefix` (whole segments, case-insensitive).
@@ -409,20 +429,9 @@ void Settings::forEach(const std::string& prefix, const std::function<void(const
 
 std::string Settings::dumpChanged() const {
     std::string out;
-    for (const GroupDesc& g : kGroups) {
-        int count = g.count > 0 ? g.count : 1;
-        for (int i = 0; i < count; ++i) {
-            for (int f = 0; f < g.fieldCount; ++f) {
-                SettingRef ref;
-                ref.group = &g;
-                ref.index = i;
-                ref.field = &g.fields[f];
-                ref.named = g.name ? nullptr : g.fields[f].name;
-                if (isDefault(ref)) continue;
-                out += "$" + path(ref) + "=" + get(ref) + "\n";
-            }
-        }
-    }
+    forEachAll([&](const SettingRef& ref) {
+        if (!isDefault(ref)) out += "$" + path(ref) + "=" + get(ref) + "\n";
+    });
     return out;
 }
 

@@ -70,11 +70,14 @@ public:
     std::string path(const SettingRef& ref) const;  // without '$'
     std::string get(const SettingRef& ref, bool maskSecret = false) const;
     Err set(const SettingRef& ref, const std::string& value, std::string& msg);
-    bool isDefault(const SettingRef& ref) const;
+    bool isDefault(const SettingRef& ref) const { return equals(ref, defaultConfig()); }
+    bool equals(const SettingRef& ref, const Config& other) const;  // same value in `other`?
 
     // Visits every setting whose path starts with prefix (segment-wise). Unwired servo slots
     // (pin none) are skipped unless addressed explicitly by the prefix.
     void forEach(const std::string& prefix, const std::function<void(const SettingRef&)>& fn) const;
+    // Visits every setting, including unwired servo slots.
+    void forEachAll(const std::function<void(const SettingRef&)>& fn) const;
 
     // "$/path=value" lines for every setting that differs from its default (what gets saved).
     std::string dumpChanged() const;

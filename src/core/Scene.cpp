@@ -13,15 +13,15 @@ static constexpr int64_t kMaxRejoinUs = 10'000'000;
 void Scene::tick(int64_t dtUs) {
     if (running_) tUs_ += dtUs;
     // A new cycle length (automatic period after editing any servo, or $/scene/period_ms)
-    // shifts the timeline of every return-mode servo: blend them over instead of jumping.
-    const uint32_t period = effectivePeriodMs(cfg_);
-    const bool periodChanged = periodMs_ != 0 && period != periodMs_;
-    periodMs_ = period;
+    // shifts the timeline of every return-mode servo: they switch over smoothly.
+    const uint32_t prevPeriod = periodMs_;
+    periodMs_ = effectivePeriodMs(cfg_, present_);
+    const bool periodChanged = prevPeriod != 0 && periodMs_ != prevPeriod;
 
     for (int i = 0; i < kMaxServos; ++i) {
         const ServoConfig& s = cfg_.servo[i];
         ServoState& st = st_[i];
-        if (!servoActive(s)) {
+        if (!live(i)) {
             st.active = false;
             continue;
         }
@@ -35,7 +35,7 @@ void Scene::tick(int64_t dtUs) {
             st.active = true;
             startRejoin(i);
         } else if (periodChanged && s.mode == Mode::Return) {
-            startRejoin(i);
+            startPeriodSwitch(i, prevPeriod);
         }
 
         if (st.testing) {
@@ -52,24 +52,55 @@ void Scene::tick(int64_t dtUs) {
             } else {
                 st.out = st.from + (tgt - st.from) * blendCurve(u);
             }
+        } else if (st.switching) {
+            // Blend between the old and the new trajectory: velocity stays continuous, and
+            // where both agree (e.g. in the first cycle) the output is exactly unchanged.
+            float u = st.durUs > 0 ? static_cast<float>(tUs_ - st.t0Us) / st.durUs : 1;
+            if (u >= 1) {
+                st.switching = false;
+                st.out = tgt;
+            } else {
+                const float old = targetDeg(s, tUs_, st.oldPeriodMs);
+                st.out = old + (tgt - old) * blendCurve(u);
+            }
         } else {
             st.out = tgt;
         }
     }
 }
 
+int64_t Scene::blendDurationUs(const ServoConfig& s, float distDeg) const {
+    // Long enough that the blend's own correction stays below the servo's speed limit.
+    int64_t durUs = static_cast<int64_t>(cfg_.scene.rejoinMs) * 1000;
+    if (s.maxDps > 0) durUs = std::max(durUs, static_cast<int64_t>(1.875f * distDeg / s.maxDps * 1e6f));
+    return std::min(durUs, kMaxRejoinUs);
+}
+
+void Scene::startPeriodSwitch(int servo, uint32_t oldPeriodMs) {
+    ServoState& st = st_[servo];
+    if (!st.valid || st.stopped || st.testing) return;  // they rejoin when released anyway
+    if (st.rejoining || st.switching) {                   // already blending: settle from here
+        startRejoin(servo);
+        return;
+    }
+    const ServoConfig& s = cfg_.servo[servo];
+    float dist = std::fabs(targetDeg(s, tUs_, oldPeriodMs) - targetDeg(s, tUs_, periodMs_));
+    st.oldPeriodMs = oldPeriodMs;
+    st.durUs = blendDurationUs(s, dist);
+    st.t0Us = tUs_;
+    st.switching = true;
+}
+
 void Scene::startRejoin(int servo) {
     ServoState& st = st_[servo];
     if (!st.valid || st.stopped || st.testing) return;
     const ServoConfig& s = cfg_.servo[servo];
-    float dist = std::fabs(targetDeg(s, tUs_, periodMs_ ? periodMs_ : effectivePeriodMs(cfg_)) - st.out);
-    // Long enough that the blend itself stays below the servo's speed limit.
-    int64_t durUs = static_cast<int64_t>(cfg_.scene.rejoinMs) * 1000;
-    if (s.maxDps > 0) durUs = std::max(durUs, static_cast<int64_t>(1.875f * dist / s.maxDps * 1e6f));
-    st.durUs = std::min(durUs, kMaxRejoinUs);
+    float dist = std::fabs(targetDeg(s, tUs_, periodMs_ ? periodMs_ : effectivePeriodMs(cfg_, present_)) - st.out);
+    st.durUs = blendDurationUs(s, dist);
     st.from = st.out;
     st.t0Us = tUs_;
     st.rejoining = true;
+    st.switching = false;
 }
 
 void Scene::reset() {
@@ -93,6 +124,7 @@ void Scene::test(int servo, float deg) {
     st.testing = true;
     st.testDeg = deg;
     st.rejoining = false;
+    st.switching = false;
 }
 
 void Scene::release(int servo) {
@@ -128,7 +160,7 @@ std::string Scene::status() const {
         l += std::to_string(i);
     };
     for (int i = 0; i < kMaxServos; ++i) {
-        if (!servoActive(cfg_.servo[i])) continue;
+        if (!live(i)) continue;
         if (st_[i].stopped) add(stopped, i);
         if (st_[i].rejoining) add(rejoin, i);
         if (st_[i].testing) add(test, i);

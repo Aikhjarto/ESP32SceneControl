@@ -127,22 +127,26 @@ time and its own settings:
 | `pingpong` | Moves start↔stop continuously, with `dwell_ms` at both ends, independent of the cycle. |
 
 The scene cycle is `$/scene/period_ms`. If that is `0`, the cycle is the longest
-servo's delay + move + dwell + return.
+servo's delay + move + dwell + return, counting only servos that have working hardware.
+When the cycle length changes, e.g. because you edit a servo, every return-mode servo
+switches smoothly from its old timeline to its new one, without stopping. Setting a
+fixed period shorter than a servo's cycle gives a warning, because that servo is cut off
+at every wrap.
 
 `duration_ms` is always the full move time; the profile only shapes the speed along the way.
 Peak speed compared with a constant-speed move: `const` 1×, `trap` 1/(1−a) where a = `accel_pct`/100,
 `tri` 2×, `sine` 1.57×, `bell` 1.875×. If a move would exceed `max_dps`, you get a warning.
 
 - **Global Stop** (button, `!`, header button) freezes the scene clock. Every servo holds its position, and **Go** carries on exactly where it stopped.
-- **Per-servo Stop** holds just that servo while the scene keeps running. On **Go** the servo *rejoins*: it blends from where it is onto its still-moving target with a minimum-jerk curve. The blend lasts at least `$/scene/rejoin_ms` and is lengthened if needed to stay under `max_dps`. When it finishes, the servo is exactly back in sync.
+- **Per-servo Stop** holds just that servo while the scene keeps running. On **Go** the servo *rejoins*: it blends from where it is onto its still-moving target with a minimum-jerk curve. The blend lasts at least `$/scene/rejoin_ms`, and is lengthened so that the blend's own correction stays under `max_dps`; while the target itself is moving, the servo briefly moves at up to the sum of both speeds. When the blend finishes, the servo is exactly back in sync.
 - **Other rejoins:** the same blend is used after a scene reset, after test mode, after re-enabling a servo, and after editing its motion while running. So no edit makes a servo jump.
 
 ## Commands (serial and WebSocket)
 
 Syntax follows FluidNC. Each command line is answered with `ok`, or with `error:N`
 plus a `[MSG:ERR: reason]` line before it. Realtime characters act at once and get no `ok`.
-Over serial, `!` `~` `?` are ordinary text inside a value (after `=`), so names and passwords
-may contain them; Ctrl-X always acts at once. Over WebSocket a realtime command is a frame
+Over serial, `!` `~` `?` are ordinary text inside the value of a `$name=value` line, so names
+and passwords may contain them; anywhere else they act at once. Ctrl-X always acts at once. Over WebSocket a realtime command is a frame
 holding just that character.
 
 | Command | Meaning |
@@ -225,7 +229,8 @@ Measure a pulse with a scope or logic analyzer and set `osc_hz` so the widths co
 Only settings that differ from their defaults are saved, as `$/path=value` lines.
 At boot they are replayed through the same parser, and any line that fails is reported
 by `$I`. `GET /config.txt` downloads this text and `POST /config.txt` restores it
-(Settings → Backup in the UI). Press Save afterwards to keep a restored config.
+(Settings → Backup in the UI). A restore starts from the defaults, so the result is exactly
+the backed-up configuration. Press Save afterwards to keep it.
 
 ## Project layout
 

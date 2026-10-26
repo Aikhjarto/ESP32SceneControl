@@ -17,7 +17,9 @@ namespace ss {
 
 class Scene {
 public:
-    explicit Scene(const Config& cfg) : cfg_(cfg) {}
+    explicit Scene(const Config& cfg) : cfg_(cfg) {
+        for (bool& p : present_) p = true;
+    }
 
     // Advance by dtUs of real time. Scene time only advances while running.
     void tick(int64_t dtUs);
@@ -39,6 +41,10 @@ public:
     bool rejoining(int servo) const { return st_[servo].rejoining; }
 
     bool hasOutput(int servo) const { return st_[servo].valid && st_[servo].active; }
+
+    // Whether a servo has working hardware (set by the firmware after allocating outputs).
+    // Servos without hardware are ignored, also for the automatic scene period.
+    void setPresent(int servo, bool present) { present_[servo] = present; }
     float output(int servo) const { return st_[servo].out; }
 
     int64_t timeUs() const { return tUs_; }
@@ -57,17 +63,23 @@ private:
         bool stopped = false;
         bool testing = false;
         bool rejoining = false;
+        bool switching = false;  // blending from the old to the new scene period
         float out = 0;
         float testDeg = 0;
         float from = 0;
         int64_t t0Us = 0;
         int64_t durUs = 0;
+        uint32_t oldPeriodMs = 0;
     };
 
+    bool live(int servo) const { return present_[servo] && servoActive(cfg_.servo[servo]); }
     void startRejoin(int servo);
+    void startPeriodSwitch(int servo, uint32_t oldPeriodMs);
+    int64_t blendDurationUs(const ServoConfig& s, float distDeg) const;
 
     const Config& cfg_;
     ServoState st_[kMaxServos];
+    bool present_[kMaxServos];
     int64_t tUs_ = 0;
     uint32_t periodMs_ = 0;
     bool running_ = false;

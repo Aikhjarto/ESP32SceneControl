@@ -3,7 +3,9 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstddef>
 #include <cstdlib>
+#include <memory>
 
 #include "core/Motion.h"
 
@@ -155,11 +157,18 @@ Err Parser::setting(const std::string& path, const std::string& value, bool hasV
 
 void Parser::afterChange(const SettingRef& ref, ReplySink& out) {
     const bool servoField = ref.group->name && ref.group->count == kMaxServos;
-    if (ref.field->flags & kMotion) scene_.rejoin(servoField ? ref.index : -1);
+    // The edited servo blends onto its new trajectory. A changed scene period is noticed by
+    // the scene itself, which switches return-mode servos over smoothly.
+    if ((ref.field->flags & kMotion) && servoField) scene_.rejoin(ref.index);
     if (replaying_) return;
 
     if (ref.field->flags & kReboot) out.line("[MSG:INFO: Restart required to apply $" + settings_.path(ref) + "]");
-    if (!servoField) return;
+    if (!servoField) {
+        if (ref.field->offset == offsetof(SceneConfig, periodMs) && ref.group->base == offsetof(Config, scene)) {
+            warnShortPeriod(out);
+        }
+        return;
+    }
 
     const ServoConfig& s = cfg_.servo[ref.index];
     float peak = peakDps(s);
@@ -171,6 +180,36 @@ void Parser::afterChange(const SettingRef& ref, ReplySink& out) {
         out.line(fmt("[MSG:WARN: servo %.0f needs %.0f ms but the scene period is %.0f ms]", ref.index,
                      servoCycleMs(s), period));
     }
+}
+
+// A return-mode servo whose delay + move + dwell + move exceeds a fixed scene period is cut
+// off at every wrap and jumps back to its start.
+void Parser::warnShortPeriod(ReplySink& out) {
+    const uint32_t period = cfg_.scene.periodMs;
+    if (period == 0) return;
+    std::string list;
+    for (int i = 0; i < kMaxServos; ++i) {
+        const ServoConfig& s = cfg_.servo[i];
+        if (servoActive(s) && s.mode == Mode::Return && servoCycleMs(s) > period) {
+            list += (list.empty() ? "" : ",") + std::to_string(i);
+        }
+    }
+    if (!list.empty()) out.line("[MSG:WARN: scene period is shorter than the cycle of servos " + list + "]");
+}
+
+void Parser::restore(const std::string& text, ReplySink& out) {
+    Guard g(host_);
+    // A backup lists only non-default settings, so start from the defaults.
+    auto before = std::make_unique<Config>(cfg_);
+    setDefaults(cfg_);
+    replay(text, out);
+    bool needsRestart = false;
+    settings_.forEachAll([&](const SettingRef& r) {
+        if ((r.field->flags & kReboot) && !settings_.equals(r, *before)) needsRestart = true;
+    });
+    scene_.rejoin(-1);
+    if (needsRestart) out.line("[MSG:INFO: Restart required to apply the restored config]");
+    warnShortPeriod(out);
 }
 
 Err Parser::servoArg(const std::string& value, int& servo, bool allowAll, std::string& msg) const {

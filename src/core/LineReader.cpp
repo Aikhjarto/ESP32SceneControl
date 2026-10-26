@@ -10,7 +10,8 @@ LineReader::Event LineReader::feed(char c) {
         realtime_ = c;
         return Event::Realtime;
     }
-    if ((c == '!' || c == '~' || c == '?') && buf_.find('=') == std::string::npos) {
+    const bool inValue = !buf_.empty() && buf_[0] == '$' && buf_.find('=') != std::string::npos;
+    if ((c == '!' || c == '~' || c == '?') && !inValue) {
         realtime_ = c;
         return Event::Realtime;
     }

@@ -47,6 +47,8 @@ public:
 
     // Runs saved "$/path=value" lines at boot. Only failures are reported.
     void replay(const std::string& text, ReplySink& out);
+    // Restores a backup: defaults first (a backup lists only non-default settings), then replay.
+    void restore(const std::string& text, ReplySink& out);
 
     Settings& settings() { return settings_; }
 
@@ -62,6 +64,7 @@ private:
     Err setting(const std::string& path, const std::string& value, bool hasValue, ReplySink& out, std::string& msg);
     Err servoArg(const std::string& value, int& servo, bool allowAll, std::string& msg) const;
     void afterChange(const SettingRef& ref, ReplySink& out);
+    void warnShortPeriod(ReplySink& out);
     void listSettings(const std::string& prefix, ReplySink& out);
     void help(ReplySink& out);
 
