@@ -60,6 +60,8 @@ public:
     void outputRelease(int out);  // out < 0: all outputs
     bool outputTesting(int out) const { return ost_[out].testing; }
     void setOutputPresent(int out, bool present) { outPresent_[out] = present; }
+    // Cycle length the scene runs with: as effectivePeriodMs, without items lacking hardware.
+    uint32_t effectivePeriod() const;
     // "[OUT:0=1,3=0]" for every output with a state
     std::string outputs() const;
 
@@ -84,6 +86,8 @@ private:
         float testDeg = 0;
         float e0 = 0;   // settle: position offset at t0
         float e1 = 0;   // settle: speed offset at t0, deg/s
+        float speedDecayS = 0;  // settle: time for the speed offset to decay
+        float lo = 0, hi = 0;   // settle: output range (servo range plus where it started)
         int64_t t0Us = 0;
         int64_t durUs = 0;
     };
@@ -94,11 +98,12 @@ private:
         bool testing = false;
         bool on = false;
         bool testOn = false;
+        bool refresh = false;  // take the scene's state at the next tick, even while held
     };
 
     bool live(int servo) const { return present_[servo] && servoActive(cfg_.servo[servo]); }
     bool outLive(int out) const { return outPresent_[out] && outputActive(cfg_.out[out]); }
-    void startRejoin(int servo);
+    void startRejoin(int servo, bool keepSpeed);
     int64_t blendDurationUs(const ServoConfig& s, float distDeg) const;
     float targetVelocity(const ServoConfig& s, int64_t tUs) const;
 

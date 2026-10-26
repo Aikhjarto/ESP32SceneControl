@@ -197,9 +197,47 @@ void test_listing_hides_unwired_outputs() {
 void test_unreached_switch_points_warn() {
     exec("$/out/0/pin=gpio.12");
     exec("$/out/0/enable=true");
-    Capture c = exec("$/out/0/seq=0:on,4000:off");  // auto period is 3500 ms
-    TEST_ASSERT_TRUE(c.hasPrefix("[MSG:WARN: outputs 0 have switch points after the end"));
+    exec("$/scene/period_ms=3500");
+    Capture c = exec("$/out/0/seq=0:on,4000:off");  // beyond the fixed 3500 ms period
+    TEST_ASSERT_TRUE(c.hasPrefix("[MSG:WARN: outputs 0 have switch points after the end of the 3500 ms"));
     TEST_ASSERT_EQUAL_STRING("ok", c.last().c_str());
+    TEST_ASSERT_FALSE(exec("$/out/0/name=Lamp").hasPrefix("[MSG:WARN: outputs"));  // only sequence edits warn
+
+    // Automatic period: the cycle grows to cover the last switch point (rounded up to a second).
+    exec("$/scene/period_ms=0");
+    TEST_ASSERT_FALSE(exec("$/out/0/seq=0:on,4200:off").hasPrefix("[MSG:WARN: outputs"));
+    TEST_ASSERT_EQUAL_UINT32(5000, scene->effectivePeriod());
+}
+
+// Fourth review: while the scene is held, outputs keep their state; only Force/Release and
+// per-output Go act. $RST=* also clears per-output stop and force.
+void test_held_scene_holds_outputs() {
+    wireOutput(0, "0:on,1000:off");
+    scene->setRunning(true);
+    run(500);
+    scene->setRunning(false);
+    exec("$/out/0/seq=0:off");  // edit while held: no change yet
+    run(100);
+    TEST_ASSERT_TRUE(scene->outputOn(0));
+    exec("$Output/Set=0,off");
+    run(20);
+    TEST_ASSERT_FALSE(scene->outputOn(0));
+    exec("$Output/Release=0");  // back to the (edited) sequence at the frozen time
+    run(20);
+    TEST_ASSERT_FALSE(scene->outputOn(0));
+    exec("$/out/0/seq=0:on");
+    scene->setRunning(true);
+    run(20);
+    TEST_ASSERT_TRUE(scene->outputOn(0));  // Go continues with the sequence
+}
+
+void test_reset_defaults_clears_output_states() {
+    wireOutput(0, "0:on");
+    exec("$Output/Stop=0");
+    exec("$Output/Set=0,off");
+    TEST_ASSERT_EQUAL_STRING("ok", exec("$RST=*").last().c_str());
+    TEST_ASSERT_FALSE(scene->outputStopped(0));
+    TEST_ASSERT_FALSE(scene->outputTesting(0));
 }
 
 void test_outputs_survive_save_and_restore() {
@@ -227,6 +265,8 @@ int main() {
     RUN_TEST(test_pin_rules_and_settings);
     RUN_TEST(test_listing_hides_unwired_outputs);
     RUN_TEST(test_unreached_switch_points_warn);
+    RUN_TEST(test_held_scene_holds_outputs);
+    RUN_TEST(test_reset_defaults_clears_output_states);
     RUN_TEST(test_outputs_survive_save_and_restore);
     return UNITY_END();
 }

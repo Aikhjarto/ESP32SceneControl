@@ -22,22 +22,32 @@ inline float blendCurve(float u) {
     return u * u * u * (10 + u * (-15 + 6 * u));
 }
 
-// Offset that decays from (position e0, speed e1) at u = 0 to zero at u = 1 over durS
-// seconds, with zero speed and acceleration at the end (quintic Hermite basis).
-inline float settleOffset(float e0, float e1, float durS, float u) {
-    const float u2 = u * u, u3 = u2 * u;
-    const float h0 = 1 + u3 * (-10 + u * (15 - 6 * u));      // 1 -> 0
-    const float h1 = u + u3 * (-6 + u * (8 - 3 * u));        // slope 1 -> 0
-    return e0 * h0 + e1 * durS * h1;
+// Offset that decays from position e0 and speed e1 to zero, tS seconds after the start: the
+// position part over t0S, the speed part over its own (shorter) t1S, both with zero speed
+// and acceleration at their end (quintic Hermite bases). Keeping t1S short bounds how far
+// a carried-over speed can push the servo before it turns around.
+inline float settleOffset(float e0, float e1, float t0S, float t1S, float tS) {
+    float off = 0;
+    if (t0S > 0 && tS < t0S) {
+        const float u = tS / t0S, u3 = u * u * u;
+        off += e0 * (1 + u3 * (-10 + u * (15 - 6 * u)));  // 1 -> 0
+    }
+    if (t1S > 0 && tS < t1S) {
+        const float u = tS / t1S, u3 = u * u * u;
+        off += e1 * t1S * (u + u3 * (-6 + u * (8 - 3 * u)));  // slope 1 -> 0
+    }
+    return off;
 }
 
 // Time in ms one servo occupies within a scene cycle (delay included); 0 for ping-pong,
 // which runs independent of the cycle.
 uint32_t servoCycleMs(const ServoConfig& s);
 
-// Scene cycle length: the configured period, or the longest servo cycle when periodMs is 0.
-// present (optional, kMaxServos entries) excludes servos without hardware.
-uint32_t effectivePeriodMs(const Config& cfg, const bool* present = nullptr);
+// Scene cycle length: the configured period or, when periodMs is 0, the longest servo cycle
+// and the last switch point of every digital output rounded up to the next full second.
+// present / outPresent (optional, kMaxServos / kMaxOutputs entries) exclude items without
+// hardware.
+uint32_t effectivePeriodMs(const Config& cfg, const bool* present = nullptr, const bool* outPresent = nullptr);
 
 // Target angle of a servo at scene time tUs, a pure function of the scene clock.
 float targetDeg(const ServoConfig& s, int64_t tUs, uint32_t periodMs);

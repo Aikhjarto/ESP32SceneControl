@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
+
+#include "core/Sequence.h"
 
 namespace ss {
 
@@ -62,12 +65,22 @@ uint32_t servoCycleMs(const ServoConfig& s) {
     }
 }
 
-uint32_t effectivePeriodMs(const Config& cfg, const bool* present) {
+uint32_t effectivePeriodMs(const Config& cfg, const bool* present, const bool* outPresent) {
     if (cfg.scene.periodMs > 0) return cfg.scene.periodMs;
     uint32_t longest = 0;
     for (int i = 0; i < kMaxServos; ++i) {
         const ServoConfig& s = cfg.servo[i];
         if (servoActive(s) && (!present || present[i])) longest = std::max(longest, servoCycleMs(s));
+    }
+    // An output sequence needs its last switch point inside the cycle, plus time for the
+    // last state to show: rounded up to the next full second.
+    for (int o = 0; o < kMaxOutputs; ++o) {
+        if (!outputActive(cfg.out[o]) || (outPresent && !outPresent[o])) continue;
+        Sequence seq;
+        std::string err;
+        if (parseSequence(cfg.out[o].seq, seq, err) && seq.count > 0) {
+            longest = std::max(longest, (seq.timeMs[seq.count - 1] / 1000 + 1) * 1000);
+        }
     }
     return std::max<uint32_t>(longest, 100);
 }

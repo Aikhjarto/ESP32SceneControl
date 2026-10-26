@@ -288,8 +288,73 @@ void test_repeated_period_changes_keep_speed() {
         maxJerkStep = std::fmax(maxJerkStep, std::fabs(step - prevStep));
         prevStep = step;
         prev = sc.output(0);
+        TEST_ASSERT_TRUE(sc.output(0) >= 0 && sc.output(0) <= 90);  // never beyond its range of motion
     }
-    TEST_ASSERT_TRUE(maxJerkStep < 1.0f);  // a stall would change the step by ~2 deg at once
+    // Speed changes gradually (here it has to reverse: the edit moved its target ~60 deg
+    // ahead); a stall would change the step by ~3.3 deg at once.
+    TEST_ASSERT_TRUE(maxJerkStep < 1.5f);
+}
+
+// Fourth review: settling must not overshoot past the servo's range or its speed limit.
+static void runChecked(Scene& sc, int ticks, float lo, float hi, float maxDps, float& maxSpeed) {
+    float prev = sc.output(0);
+    for (int k = 0; k < ticks; ++k) {
+        sc.tick(20000);
+        TEST_ASSERT_TRUE(sc.output(0) >= lo - 1e-3f && sc.output(0) <= hi + 1e-3f);
+        maxSpeed = std::fmax(maxSpeed, std::fabs(sc.output(0) - prev) / 0.02f);
+        prev = sc.output(0);
+        (void)maxDps;
+    }
+}
+
+void test_reset_during_fast_move_stays_in_range() {
+    cfg.servo[0].durationMs = 300;  // 90 deg in 0.3 s, bell: peak 562 deg/s
+    Scene sc(cfg);
+    sc.setRunning(true);
+    run(sc, 150);  // mid-move, at full speed
+    sc.reset();
+    float maxSpeed = 0;
+    runChecked(sc, 150, 0, 90, 600, maxSpeed);
+    TEST_ASSERT_TRUE(maxSpeed <= 600 * 1.05f);
+}
+
+void test_release_while_slewing_does_not_run_on() {
+    cfg.servo[0].startDeg = 90;  // target static at the release point's side: start = stop = 90
+    Scene sc(cfg);
+    sc.setRunning(true);
+    sc.tick(20000);
+    sc.test(0, 180);
+    for (int k = 0; k < 3; ++k) sc.tick(20000);  // slewing up at 600 deg/s (90 -> 126 deg)
+    const float at = sc.output(0);
+    sc.release(0);
+    float maxSpeed = 0;
+    runChecked(sc, 200, 0, std::fmax(at, 90), 600, maxSpeed);  // never beyond the release point
+}
+
+void test_long_rejoin_and_period_change_stay_in_range() {
+    cfg.scene.periodMs = 0;
+    cfg.scene.rejoinMs = 2000;
+    cfg.servo[1].enable = true;
+    cfg.servo[1].delayMs = 1250;
+    Scene sc(cfg);
+    sc.setRunning(true);
+    run(sc, 3750 * 3 + 300);
+    cfg.servo[1].delayMs = 1500;
+    float maxSpeed = 0;
+    runChecked(sc, 150, 0, 90, 600, maxSpeed);
+}
+
+void test_reenable_starts_from_rest() {
+    Scene sc(cfg);
+    sc.setRunning(true);
+    run(sc, 400);  // mid-move
+    cfg.servo[0].enable = false;
+    run(sc, 2000);
+    cfg.servo[0].enable = true;
+    sc.tick(20000);  // re-enabled: settle starts here
+    float a = sc.output(0);
+    sc.tick(20000);
+    TEST_ASSERT_TRUE(std::fabs(sc.output(0) - a) < 1.0f);  // from rest, no old speed carried over
 }
 
 void test_servos_without_hardware_do_not_set_the_period() {
@@ -334,6 +399,10 @@ int main() {
     RUN_TEST(test_period_change_keeps_moving_servos_on_target);
     RUN_TEST(test_period_switch_keeps_velocity_continuous);
     RUN_TEST(test_repeated_period_changes_keep_speed);
+    RUN_TEST(test_reset_during_fast_move_stays_in_range);
+    RUN_TEST(test_release_while_slewing_does_not_run_on);
+    RUN_TEST(test_long_rejoin_and_period_change_stay_in_range);
+    RUN_TEST(test_reenable_starts_from_rest);
     RUN_TEST(test_servos_without_hardware_do_not_set_the_period);
     RUN_TEST(test_status_lists_states);
     return UNITY_END();

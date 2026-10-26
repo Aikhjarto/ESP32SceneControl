@@ -169,7 +169,11 @@ void Parser::afterChange(const SettingRef& ref, ReplySink& out) {
             warnShortPeriod(out);
             warnUnreachedSwitchPoints(out);
         }
-        if (ref.group->base == offsetof(Config, out)) warnUnreachedSwitchPoints(out);
+        if (ref.group->base == offsetof(Config, out) &&
+            (ref.field->offset == offsetof(OutputConfig, seq) || ref.field->offset == offsetof(OutputConfig, enable) ||
+             ref.field->offset == offsetof(OutputConfig, pin))) {
+            warnUnreachedSwitchPoints(out);
+        }
         return;
     }
 
@@ -201,8 +205,11 @@ void Parser::warnShortPeriod(ReplySink& out) {
 }
 
 // Switch points at or after the end of the scene cycle are never reached.
+// With the automatic period the cycle always covers every output's last switch point, so
+// only a fixed $/scene/period_ms can leave switch points unreached.
 void Parser::warnUnreachedSwitchPoints(ReplySink& out) {
-    const uint32_t period = effectivePeriodMs(cfg_);
+    const uint32_t period = cfg_.scene.periodMs;
+    if (period == 0) return;
     std::string list;
     for (int o = 0; o < kMaxOutputs; ++o) {
         if (!outputActive(cfg_.out[o])) continue;
@@ -214,7 +221,7 @@ void Parser::warnUnreachedSwitchPoints(ReplySink& out) {
     }
     if (!list.empty()) {
         out.line("[MSG:WARN: outputs " + list + " have switch points after the end of the " + std::to_string(period) +
-                 " ms scene cycle; those are never reached]");
+                 " ms scene period; those are never reached]");
     }
 }
 
@@ -342,6 +349,11 @@ Err Parser::command(const std::string& name, const std::string& value, bool hasV
         {
             Guard g(host_);
             setDefaults(cfg_);
+            // Forget per-item states too: stopped/tested servos and stopped/forced outputs.
+            scene_.setServoRun(-1, true);
+            scene_.release(-1);
+            scene_.setOutputRun(-1, true);
+            scene_.outputRelease(-1);
             scene_.rejoin(-1);
         }
         if (!host_.erase(msg)) return Err::FlashFailed;
