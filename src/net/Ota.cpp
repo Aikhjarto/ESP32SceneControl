@@ -36,13 +36,23 @@ static std::atomic<bool> gBusy{false};
 // ---------------------------------------------------------------------------
 // Image writer shared by upload and download
 
+// An unverified image must never be bootable: the bootloader falls back to other slots
+// without checking signatures. So the header's segment count (byte 1) is left erased
+// (0xFF, an invalid count) while the image is written, and only programmed after the
+// signature check. A reset or power loss mid-transfer therefore leaves an unbootable slot.
+constexpr size_t kHeldByte = 1;
+
 class OtaWriter {
 public:
-    ~OtaWriter() {
+    ~OtaWriter() { discard(); }
+
+    // Gives up an unfinished update and wipes the slot's header. Call before resuming
+    // motion: the erase blocks flash access briefly.
+    void discard() {
         if (handle_) esp_ota_abort(handle_);
-        // A rejected or partial image must never be bootable: the bootloader falls back to
-        // other slots without checking signatures, so wipe the image header.
+        handle_ = 0;
         if (started_ && !installed_) esp_partition_erase_range(target_, 0, target_->erase_size);
+        started_ = false;
     }
 
     bool begin(size_t total, std::string& err) {
@@ -69,7 +79,16 @@ public:
             ESP_LOGI(TAG, "writing %s to %s (%u bytes)", version_.c_str(), target_->label, unsigned(total_));
         }
         signature_.feed(data, len);
-        esp_err_t e = esp_ota_write(handle_, data, len);
+        esp_err_t e;
+        if (written_ == 0) {
+            std::unique_ptr<uint8_t[]> first(new uint8_t[len]);
+            std::memcpy(first.get(), data, len);
+            heldByte_ = first[kHeldByte];
+            first[kHeldByte] = 0xFF;  // stays erased in flash until the signature is verified
+            e = esp_ota_write(handle_, first.get(), len);
+        } else {
+            e = esp_ota_write(handle_, data, len);
+        }
         if (e != ESP_OK) return fail(std::string("esp_ota_write: ") + esp_err_to_name(e), err);
         written_ += len;
         return true;
@@ -77,9 +96,11 @@ public:
 
     bool finish(std::string& err) {
         if (written_ != total_) return fail("incomplete image", err);
-        // Checked before the new slot can become the boot partition.
+        // Checked before the image becomes complete and before the slot can become the boot partition.
         if (!signature_.verify(ota_verify_key_start, err)) return false;
-        esp_err_t e = esp_ota_end(handle_);  // also checks the image's own checksum
+        esp_err_t e = esp_partition_write(target_, kHeldByte, &heldByte_, 1);
+        if (e != ESP_OK) return fail(std::string("completing header: ") + esp_err_to_name(e), err);
+        e = esp_ota_end(handle_);  // also checks the image's own checksum
         handle_ = 0;
         if (e == ESP_OK) e = esp_ota_set_boot_partition(target_);
         if (e != ESP_OK) return fail(e == ESP_ERR_OTA_VALIDATE_FAILED ? "image is corrupt" : esp_err_to_name(e), err);
@@ -123,10 +144,12 @@ private:
     SignedImage signature_;
     size_t total_ = 0;
     size_t written_ = 0;
+    uint8_t heldByte_ = 0;
     std::string version_;
 };
 
-// Holds the scene while flash is written; on failure the scene resumes.
+// Holds the scene while flash is written. After a failure the scene resumes only if this
+// update stopped it and nobody changed Stop/Go in the meantime.
 class Session {
 public:
     bool start(std::string& err) {
@@ -135,12 +158,20 @@ public:
             return false;
         }
         active_ = true;
-        app::Locked l;
-        wasRunning_ = app::scene().running();
         return true;
     }
 
-    void hold() { app::setRunning(false, "firmware update"); }
+    void hold() {
+        bool running;
+        {
+            app::Locked l;
+            running = app::scene().running();
+        }
+        if (!running) return;
+        app::setRunning(false, "firmware update");
+        heldByUs_ = true;
+        holdGeneration_ = app::runGeneration();
+    }
 
     void end(bool ok, const std::string& version, const std::string& err) {
         if (ok) {
@@ -149,7 +180,7 @@ public:
         } else {
             ESP_LOGW(TAG, "update failed: %s", err.c_str());
             app::broadcast("[MSG:ERR: Firmware update failed: " + err + "]");
-            if (wasRunning_) app::setRunning(true, "firmware update failed");
+            if (heldByUs_ && app::runGeneration() == holdGeneration_) app::setRunning(true, "firmware update failed");
         }
         gBusy = false;
         active_ = false;
@@ -161,7 +192,8 @@ public:
 
 private:
     bool active_ = false;
-    bool wasRunning_ = false;
+    bool heldByUs_ = false;
+    uint32_t holdGeneration_ = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -194,6 +226,7 @@ esp_err_t otaUploadHandler(httpd_req_t* req) {
         received += want;
     }
     if (ok) ok = writer.finish(err);
+    if (!ok) writer.discard();  // wipe before motion resumes
 
     session.end(ok, writer.version(), err);
     if (!ok) return reply(req, "400 Bad Request", err);
@@ -270,6 +303,7 @@ static void downloadTask(void* arg) {
         if (session.start(err)) {
             OtaWriter writer;
             bool ok = download(*url, writer, session, err);
+            if (!ok) writer.discard();  // wipe before motion resumes
             session.end(ok, writer.version(), err);
         } else {
             app::broadcast("[MSG:ERR: " + err + "]");

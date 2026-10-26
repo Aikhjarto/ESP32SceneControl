@@ -1,5 +1,9 @@
 #include "app/Commands.h"
 
+#include <algorithm>
+#include <atomic>
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <strings.h>
 
@@ -17,6 +21,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/ringbuf.h"
 #include "freertos/task.h"
 #include "net/Ota.h"
 #include "net/WebServer.h"
@@ -29,30 +34,79 @@ static const char* TAG = "cmd";
 
 constexpr uart_port_t kUartPort = UART_NUM_0;
 
+constexpr size_t kUartRingBytes = 8192;
+constexpr size_t kUartChunk = 1024;  // reply chunk size; chunks end at line breaks
+constexpr TickType_t kSubmitWait = pdMS_TO_TICKS(100);
+
 static WsSend gWsSend;
 static WsBroadcast gWsBroadcast;
 static QueueHandle_t gQueue;
+static RingbufHandle_t gUartOut;
+static std::atomic<uint32_t> gLogDropped;
 
 struct Request {
     ChannelId ch;
     std::string line;
 };
 
-// ---------------------------------------------------------------------------
-// Output routing
+uint32_t droppedLogLines() { return gLogDropped; }
 
-static void sendTo(ChannelId ch, const std::string& text) {
+// ---------------------------------------------------------------------------
+// Serial output: everything (replies, broadcasts, log lines) goes through one ring buffer
+// drained by one writer task. Items are whole lines, so output never interleaves inside a
+// line, and a caller only waits as long as it chooses to.
+
+static void uartWriterTask(void*) {
+    for (;;) {
+        size_t len = 0;
+        void* item = xRingbufferReceive(gUartOut, &len, portMAX_DELAY);
+        uart_write_bytes(kUartPort, item, len);
+        vRingbufferReturnItem(gUartOut, item);
+    }
+}
+
+static bool uartOut(const char* data, size_t len, TickType_t wait) {
+    while (len > 0) {
+        size_t n = std::min(len, kUartChunk);
+        if (n < len) {  // end the chunk after its last complete line
+            size_t cut = n;
+            while (cut > 0 && data[cut - 1] != '\n') --cut;
+            if (cut > 0) n = cut;
+        }
+        if (xRingbufferSend(gUartOut, data, n, wait) != pdTRUE) return false;
+        data += n;
+        len -= n;
+    }
+    return true;
+}
+
+// ESP_LOG hook: one call per log line. Never waits, so logging from the motion task or a
+// timer callback cannot stall them; if the buffer is full the line is dropped and counted.
+static int logToUart(const char* fmt, va_list ap) {
+    char line[256];
+    int n = vsnprintf(line, sizeof(line), fmt, ap);
+    if (n <= 0) return n;
+    size_t len = static_cast<size_t>(n);
+    if (len >= sizeof(line)) {
+        len = sizeof(line) - 1;
+        line[len - 1] = '\n';
+    }
+    if (xRingbufferSend(gUartOut, line, len, 0) != pdTRUE) ++gLogDropped;
+    return n;
+}
+
+static void sendTo(ChannelId ch, const std::string& text, TickType_t wait = portMAX_DELAY) {
     if (text.empty()) return;
     if (ch == kUart) {
-        uart_write_bytes(kUartPort, text.data(), text.size());
+        uartOut(text.data(), text.size(), wait);
     } else if (gWsSend) {
-        gWsSend(ch - 1, text);
+        gWsSend(ch, text);
     }
 }
 
 static void broadcastAll(const std::string& text) {
     std::string withNl = text + "\n";
-    uart_write_bytes(kUartPort, withNl.data(), withNl.size());
+    uartOut(withNl.data(), withNl.size(), portMAX_DELAY);
     if (gWsBroadcast) gWsBroadcast(withNl);
 }
 
@@ -102,6 +156,9 @@ public:
                  esp_get_idf_version());
         out.line(buf);
         out.line(net::firmwareInfo());
+        if (droppedLogLines() > 0) {
+            out.line("[MSG:INFO: " + std::to_string(droppedLogLines()) + " log lines dropped (serial output was busy)]");
+        }
         if (!net::defaultUpdateUrl().empty()) out.line("[UPDATE:" + net::defaultUpdateUrl() + "]");
         if (!net::apSsid().empty()) {
             snprintf(buf, sizeof(buf), "[MSG:INFO: AP \"%s\" http://%s/ (%d WebSocket clients)]",
@@ -149,18 +206,19 @@ Parser& parser() {
 // ---------------------------------------------------------------------------
 // Executor and serial channel
 
-void submitLine(ChannelId ch, const std::string& line) {
+bool submitLine(ChannelId ch, const std::string& line) {
     auto* req = new Request{ch, line};
-    if (xQueueSend(gQueue, &req, 0) != pdTRUE) {
-        delete req;
-        sendTo(ch, "[MSG:ERR: Busy, command dropped]\nerror:3\n");
-    }
+    if (xQueueSend(gQueue, &req, kSubmitWait) == pdTRUE) return true;
+    delete req;
+    // Serial is read by people: say so. WebSocket callers resync the client instead.
+    if (ch == kUart) sendTo(ch, "[MSG:ERR: Busy, command dropped]\nerror:3\n", kSubmitWait);
+    return false;
 }
 
 void submitRealtime(ChannelId ch, char c) {
     BufferSink sink;
-    parser().realtime(c, sink);
-    sendTo(ch, sink.text);
+    parser().realtime(c, sink);  // acts first; the reply must not hold up the next realtime char
+    sendTo(ch, sink.text, ch == kUart ? pdMS_TO_TICKS(50) : portMAX_DELAY);
 }
 
 static void executorTask(void*) {
@@ -200,11 +258,11 @@ void setWsTransport(WsSend send, WsBroadcast broadcast) {
 }
 
 void startCommands() {
-    // Writers block while a large reply drains, so time-critical tasks must not write here
-    // (they use app::broadcast, which hands the text to a background task).
-    ESP_ERROR_CHECK(uart_driver_install(kUartPort, 1024, 4096, 0, nullptr, 0));
-    // Route stdout/ESP_LOG through the driver too, so log lines can't land inside replies.
-    uart_vfs_dev_use_driver(kUartPort);
+    ESP_ERROR_CHECK(uart_driver_install(kUartPort, 1024, 1024, 0, nullptr, 0));
+    uart_vfs_dev_use_driver(kUartPort);  // any stray printf also goes through the driver
+    gUartOut = xRingbufferCreate(kUartRingBytes, RINGBUF_TYPE_NOSPLIT);
+    xTaskCreatePinnedToCore(uartWriterTask, "uart_out", 3072, nullptr, 3, nullptr, 0);
+    esp_log_set_vprintf(logToUart);
     gQueue = xQueueCreate(16, sizeof(Request*));
     setBroadcaster(broadcastAll);
     xTaskCreatePinnedToCore(executorTask, "cmd", 6144, nullptr, 5, nullptr, 0);

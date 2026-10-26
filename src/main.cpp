@@ -62,6 +62,11 @@ extern "C" void app_main() {
     }
 
     app::outputs().begin(app::config(), app::bootLog());
+    // Servos without hardware (e.g. on a PCA9685 that is not fitted) take no part in the
+    // scene, also not in the automatic scene period.
+    for (int i = 0; i < kMaxServos; ++i) {
+        app::scene().setPresent(i, app::outputs().channel(i).kind != HwKind::None);
+    }
     app::startMotion();
     app::startCommands();
 

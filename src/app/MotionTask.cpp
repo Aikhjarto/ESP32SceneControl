@@ -1,6 +1,7 @@
 #include "app/MotionTask.h"
 
 #include <algorithm>
+#include <atomic>
 
 #include "app/App.h"
 #include "core/Motion.h"
@@ -28,12 +29,17 @@ static bool gButtonActiveLow;
 static bool gButtonStable;
 static int64_t gButtonChangeUs;
 
+static std::atomic<uint32_t> gRunGeneration;
+
+uint32_t runGeneration() { return gRunGeneration; }
+
 void setRunning(bool run, const char* source) {
     bool changed;
     {
         Locked l;
         changed = scene().running() != run;
         scene().setRunning(run);
+        if (changed) ++gRunGeneration;
     }
     if (changed) broadcast(std::string("[MSG:INFO: ") + (run ? "Go" : "Hold") + " (" + source + ")]");
 }
