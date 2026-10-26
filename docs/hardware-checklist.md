@@ -110,7 +110,7 @@ Measure **one servo per block** (servos 0–3 by default). The MCPWM clock setup
 - [ ] **Persistence:** change a few settings, `$CS`, power-cycle, and all are back. `$$` shows them.
 - [ ] **Factory defaults:** `$RST=*`, then `$Bye`. Defaults are back.
 - [ ] **Backup round trip:** Settings → Download config, change something, Restore config, Save. The original values are back.
-- [ ] **Clean replies** (fix #13): log output never appears in the middle of `$$` / `$I` replies.
+- [ ] **Clean replies:** log output never appears in the middle of a reply *line*. During a long `$$` reply a log line may appear between two reply lines.
 
 ## 8. WiFi and web UI
 
@@ -162,5 +162,6 @@ Before these tests, bump `PROJECT_VER` in `CMakeLists.txt` (e.g. to `0.1.1`) and
 
 ## 10. Long run
 
+- [ ] **Stack headroom:** after the long run, `$I` shows `Stack free` for each task. Every value should stay above about 512 bytes; report any task below that.
 - [ ] **Stability:** run the full scene for 1–2 hours with the UI open on a phone. No resets, panics or `Guru Meditation` lines in the log. `?` shows the scene time and cycle count rising steadily.
 - [ ] **Servo temperature:** check servo temperatures and the supply after the long run.

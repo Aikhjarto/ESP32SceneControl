@@ -162,12 +162,8 @@ public:
     }
 
     void hold() {
-        bool running;
-        {
-            app::Locked l;
-            running = app::scene().running();
-        }
-        if (!running) return;
+        app::Locked l;  // check and hold atomically (the lock is recursive)
+        if (!app::scene().running()) return;
         app::setRunning(false, "firmware update");
         heldByUs_ = true;
         holdGeneration_ = app::runGeneration();

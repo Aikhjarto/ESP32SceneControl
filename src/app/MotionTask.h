@@ -11,7 +11,7 @@ void startMotion();
 // Global Stop/Go, used by the button, the realtime commands and the web UI.
 void setRunning(bool run, const char* source);
 
-// Increments on every Stop/Go change; lets a caller tell whether anyone changed it since.
+// Increments on every Stop/Go request; lets a caller tell whether anyone asked since.
 uint32_t runGeneration();
 
 }  // namespace ss::app

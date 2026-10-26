@@ -28,7 +28,7 @@ bool submitLine(ChannelId ch, const std::string& line);
 void submitRealtime(ChannelId ch, char c);  // handled immediately, not queued
 
 // WebSocket transport, provided by the web server.
-using WsSend = void (*)(ChannelId ch, const std::string& text);
+using WsSend = void (*)(ChannelId ch, std::string text);
 using WsBroadcast = void (*)(const std::string& text);
 void setWsTransport(WsSend send, WsBroadcast broadcast);
 

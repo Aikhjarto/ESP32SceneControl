@@ -39,7 +39,7 @@ void setRunning(bool run, const char* source) {
         Locked l;
         changed = scene().running() != run;
         scene().setRunning(run);
-        if (changed) ++gRunGeneration;
+        ++gRunGeneration;  // every request counts, also one that changes nothing (e.g. Stop while held)
     }
     if (changed) broadcast(std::string("[MSG:INFO: ") + (run ? "Go" : "Hold") + " (" + source + ")]");
 }

@@ -60,6 +60,7 @@ extern "C" void app_main() {
         app::parser().replay(saved, log);
         ESP_LOGI(TAG, "config loaded (%u bytes)", static_cast<unsigned>(saved.size()));
     }
+    app::parser().markBooted();  // restart-only settings in effect from here on
 
     app::outputs().begin(app::config(), app::bootLog());
     // Servos without hardware (e.g. on a PCA9685 that is not fitted) take no part in the

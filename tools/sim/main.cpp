@@ -67,6 +67,7 @@ struct SimHost : Host {
         text << f.rdbuf();
         StdoutSink sink;
         parser->replay(text.str(), sink);
+        parser->markBooted();
         scene.reset();
         scene.setServoRun(-1, true);
         scene.release(-1);
@@ -104,8 +105,7 @@ int main(int argc, char** argv) {
             std::ifstream f(req.substr(2));
             std::stringstream text;
             text << f.rdbuf();
-            parser.restore(text.str(), out);
-            out.line("ok");
+            out.line(parser.restore(text.str(), out) ? "ok" : "error:2");
         }
         std::cout << ".\n" << std::flush;
     }

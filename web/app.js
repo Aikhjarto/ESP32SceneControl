@@ -285,6 +285,10 @@ function bind(input, path) {
   input.addEventListener('change', () => {
     let v = input.type === 'checkbox' ? String(input.checked) : input.value.trim();
     if (input.dataset.number !== undefined) v = v.replace(',', '.');  // decimal comma (e.g. German keyboards)
+    if (input.type === 'password' && v === '' &&
+        !confirm('An empty password makes the WiFi access point open to everyone after the next restart. Continue?')) {
+      return;
+    }
     setSetting(path, v);
   });
   return input;
@@ -837,6 +841,10 @@ function addServo() {
     if (!(await setSetting(sp(free, 'pin'), pin.trim()))) return;
     await setSetting(sp(free, 'enable'), 'true');
     await send(`$/servo/${free}`, { quiet: true });  // fetch all fields of the new slot
+    // Re-read the hardware map: the new servo gets an output only after a restart, and until
+    // then it must stay out of the automatic period, as on the device.
+    muted = true;
+    try { await send('$I', { quiet: true }); } finally { muted = false; }
     renderAll();
   })();
 }
@@ -905,8 +913,9 @@ function init() {
     if (!file) return;
     const res = await fetch('/config.txt', { method: 'POST', body: await file.text() }).catch(() => null);
     e.target.value = '';
-    if (!res || !res.ok) { toast('Restore failed', true); return; }
-    $('#infoOut').textContent = await res.text();
+    if (!res) { toast('Restore failed (no connection)', true); return; }
+    $('#infoOut').textContent = await res.text();  // lists rejected lines, if any
+    if (!res.ok) { toast('Restore rejected, nothing was changed', true); return; }
     setDirty(true);
     toast('Config restored — press Save to keep it');
     loadAll();

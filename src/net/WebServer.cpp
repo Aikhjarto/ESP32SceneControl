@@ -84,11 +84,15 @@ static std::atomic<int> gStatusInFlight;  // queued status pushes not yet sent
 // Connection generation per socket, bumped on every WebSocket handshake. lwIP reuses socket
 // numbers, so a message for a closed connection must not go to the next client on that fd.
 static std::atomic<uint32_t> gGeneration[256];
+// Connection whose reply had to be dropped: it is closed instead of being answered out of order.
+static std::atomic<uint32_t> gStale[256];
 static_assert(LWIP_SOCKET_OFFSET + CONFIG_LWIP_MAX_SOCKETS <= 256, "socket numbers must fit gGeneration");
 static uint32_t gNextGeneration;  // httpd task only
 
 // Sends everything or fails. A socket send may be cut short by the send timeout on a slow
 // link (httpd_ws_send_frame_async treats that as success and corrupts the stream).
+// Gives up after two consecutive send timeouts (2 s each), so one dead client blocks the
+// single server task for at most ~4 s.
 static bool sendAll(int fd, const char* p, size_t n) {
     int stalls = 0;
     while (n > 0) {
@@ -97,7 +101,7 @@ static bool sendAll(int fd, const char* p, size_t n) {
             p += r;
             n -= r;
             stalls = 0;
-        } else if (r != HTTPD_SOCK_ERR_TIMEOUT || ++stalls >= 3) {
+        } else if (r != HTTPD_SOCK_ERR_TIMEOUT || ++stalls >= 2) {
             return false;
         }
     }
@@ -124,19 +128,23 @@ static bool sendTextFrame(int fd, const std::string& text) {
 
 static void wsSendWork(void* arg) {
     auto* m = static_cast<WsMessage*>(arg);
-    if (gGeneration[m->fd & 0xFF] == m->generation &&
-        httpd_ws_get_fd_info(gServer, m->fd) == HTTPD_WS_CLIENT_WEBSOCKET && !sendTextFrame(m->fd, m->text)) {
-        // Dead or stuck client: drop it instead of blocking every later send on it.
-        ESP_LOGW(TAG, "WebSocket client %d not responding, closing", m->fd);
-        httpd_sess_trigger_close(gServer, m->fd);
+    const int slot = m->fd & 0xFF;
+    if (gGeneration[slot] == m->generation && httpd_ws_get_fd_info(gServer, m->fd) == HTTPD_WS_CLIENT_WEBSOCKET) {
+        if (gStale[slot] == m->generation) {
+            httpd_sess_trigger_close(gServer, m->fd);  // never send after a dropped reply
+        } else if (!sendTextFrame(m->fd, m->text)) {
+            // Dead or stuck client: drop it instead of blocking every later send on it.
+            ESP_LOGW(TAG, "WebSocket client %d not responding, closing", m->fd);
+            httpd_sess_trigger_close(gServer, m->fd);
+        }
     }
     if (m->status) --gStatusInFlight;
     delete m;
 }
 
-static void wsQueue(int fd, uint32_t generation, const std::string& text, bool status) {
+static void wsQueue(int fd, uint32_t generation, std::string text, bool status) {
     if (!gServer || httpd_ws_get_fd_info(gServer, fd) != HTTPD_WS_CLIENT_WEBSOCKET) return;
-    auto* m = new WsMessage{fd, generation, text, status};
+    auto* m = new WsMessage{fd, generation, std::move(text), status};
     if (status) ++gStatusInFlight;
     if (xTaskGetCurrentTaskHandle() == gHttpdTask) {  // already in the httpd task (realtime replies)
         wsSendWork(m);
@@ -144,7 +152,11 @@ static void wsQueue(int fd, uint32_t generation, const std::string& text, bool s
     }
     for (int attempt = 0; httpd_queue_work(gServer, wsSendWork, m) != ESP_OK; ++attempt) {
         if (status || attempt >= 50) {  // replies: retry for up to ~0.5 s
-            if (status) --gStatusInFlight;
+            if (status) {
+                --gStatusInFlight;
+            } else {
+                gStale[fd & 0xFF] = generation;  // the client would pair later replies wrongly
+            }
             ESP_LOGW(TAG, "WebSocket %s to client %d dropped", status ? "status" : "reply", fd);
             delete m;
             return;
@@ -153,8 +165,17 @@ static void wsQueue(int fd, uint32_t generation, const std::string& text, bool s
     }
 }
 
-static void wsSend(app::ChannelId ch, const std::string& text) {
-    wsQueue(app::wsFd(ch), app::wsGeneration(ch), text, false);
+static void wsSend(app::ChannelId ch, std::string text) {
+    wsQueue(app::wsFd(ch), app::wsGeneration(ch), std::move(text), false);
+}
+
+// Runs in the server task for every accepted socket. In ESP-IDF 6 the WebSocket handshake
+// is answered internally and never reaches wsHandler, so a new connection gets its
+// generation here.
+static esp_err_t onOpen(httpd_handle_t, int fd) {
+    gHttpdTask = xTaskGetCurrentTaskHandle();
+    gGeneration[fd & 0xFF] = ++gNextGeneration;
+    return ESP_OK;
 }
 
 static void wsBroadcastAll(const std::string& text, bool status) {
@@ -169,22 +190,22 @@ static void wsBroadcast(const std::string& text) { wsBroadcastAll(text, false); 
 
 static esp_err_t wsHandler(httpd_req_t* req) {
     const int fd = httpd_req_to_sockfd(req);
-    gHttpdTask = xTaskGetCurrentTaskHandle();
-    if (req->method == HTTP_GET) {  // handshake done: a new connection on this socket
-        gGeneration[fd & 0xFF] = ++gNextGeneration;
-        ESP_LOGI(TAG, "WebSocket client %d connected", fd);
-        return ESP_OK;
-    }
+    if (req->method == HTTP_GET) return ESP_OK;  // handshake (not reached in ESP-IDF 6)
+    if (gStale[fd & 0xFF] == gGeneration[fd & 0xFF]) return ESP_FAIL;  // a reply was lost: resync
+
     httpd_ws_frame_t frame = {};
     esp_err_t err = httpd_ws_recv_frame(req, &frame, 0);
     if (err != ESP_OK) return err;
-    if (frame.type != HTTPD_WS_TYPE_TEXT || frame.len == 0) return ESP_OK;
     if (frame.len > kMaxWsFrame) return ESP_FAIL;
-
+    // Always consume the payload (also of binary/pong frames), or its bytes would be parsed
+    // as the next frame.
     std::string text(frame.len, '\0');
-    frame.payload = reinterpret_cast<uint8_t*>(text.data());
-    err = httpd_ws_recv_frame(req, &frame, frame.len);
-    if (err != ESP_OK) return err;
+    if (frame.len > 0) {
+        frame.payload = reinterpret_cast<uint8_t*>(text.data());
+        err = httpd_ws_recv_frame(req, &frame, frame.len);
+        if (err != ESP_OK) return err;
+    }
+    if (frame.type != HTTPD_WS_TYPE_TEXT || text.empty()) return ESP_OK;
 
     const app::ChannelId ch = app::wsChannel(fd, gGeneration[fd & 0xFF]);
     if (text.size() == 1 && Parser::isRealtime(text[0])) {
@@ -200,9 +221,9 @@ static esp_err_t wsHandler(httpd_req_t* req) {
         if (!line.empty() && !app::submitLine(ch, line)) {
             // Executor stays busy: a "busy" reply now would overtake pending replies and be
             // paired with the wrong request. Close instead; the UI reconnects and reloads.
+            // Returning an error makes the server close the connection right away.
             ESP_LOGW(TAG, "command queue full, resyncing WebSocket client %d", fd);
-            httpd_sess_trigger_close(req->handle, fd);
-            break;
+            return ESP_FAIL;
         }
         pos = nl + 1;
     }
@@ -248,11 +269,13 @@ static esp_err_t configPost(httpd_req_t* req) {
         std::string text;
         void line(const std::string& t) override { text += t + "\n"; }
     } sink;
+    bool ok;
     {
         app::Locked l;  // one atomic restore, not interleaved with other channels
-        app::parser().restore(body, sink);
+        ok = app::parser().restore(body, sink);
     }
-    sink.text += "ok\n";
+    sink.text += ok ? "ok\n" : "error:2\n";
+    httpd_resp_set_status(req, ok ? "200 OK" : "400 Bad Request");
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_send(req, sink.text.data(), sink.text.size());
 }
@@ -277,7 +300,8 @@ void startWebServer(const std::string& ip, bool captive) {
     cfg.keep_alive_idle = 5;
     cfg.keep_alive_interval = 5;
     cfg.keep_alive_count = 3;
-    cfg.send_wait_timeout = 3;
+    cfg.send_wait_timeout = 2;
+    cfg.open_fn = onOpen;
     cfg.max_uri_handlers = 12;
     cfg.stack_size = 8192;
     cfg.uri_match_fn = httpd_uri_match_wildcard;

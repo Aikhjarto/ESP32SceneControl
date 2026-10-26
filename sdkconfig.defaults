@@ -22,3 +22,8 @@ CONFIG_LWIP_MAX_SOCKETS=16
 # OTA: a new image that resets before confirming itself is rolled back by the bootloader.
 # (Bootloader setting: takes effect after one serial flash.)
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Log lines are formatted in a 256-byte buffer on the logging task's stack (see the log
+# hook in src/app/Commands.cpp); give the small system tasks that log some headroom.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=3584
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=4096

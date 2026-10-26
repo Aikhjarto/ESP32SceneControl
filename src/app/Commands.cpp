@@ -35,7 +35,7 @@ static const char* TAG = "cmd";
 constexpr uart_port_t kUartPort = UART_NUM_0;
 
 constexpr size_t kUartRingBytes = 8192;
-constexpr size_t kUartChunk = 1024;  // reply chunk size; chunks end at line breaks
+constexpr size_t kUartChunk = 4000;  // reply chunk size (ring item limit 4088); ends at a line break
 constexpr TickType_t kSubmitWait = pdMS_TO_TICKS(100);
 
 static WsSend gWsSend;
@@ -95,12 +95,12 @@ static int logToUart(const char* fmt, va_list ap) {
     return n;
 }
 
-static void sendTo(ChannelId ch, const std::string& text, TickType_t wait = portMAX_DELAY) {
+static void sendTo(ChannelId ch, std::string text, TickType_t wait = portMAX_DELAY) {
     if (text.empty()) return;
     if (ch == kUart) {
         uartOut(text.data(), text.size(), wait);
     } else if (gWsSend) {
-        gWsSend(ch, text);
+        gWsSend(ch, std::move(text));  // replies can be tens of KB: don't copy
     }
 }
 
@@ -156,6 +156,16 @@ public:
                  esp_get_idf_version());
         out.line(buf);
         out.line(net::firmwareInfo());
+        // Minimum free stack per task since boot (bytes), to check headroom on real hardware.
+        std::string stacks;
+        for (const char* name : {"motion", "cmd", "uart", "uart_out", "broadcast", "status", "httpd", "dns", "ota",
+                                 "sys_evt", "tcpip_thread", "esp_timer"}) {
+            if (TaskHandle_t t = xTaskGetHandle(name)) {
+                stacks += std::string(stacks.empty() ? "" : ", ") + name + "=" +
+                          std::to_string(uxTaskGetStackHighWaterMark(t));
+            }
+        }
+        out.line("[MSG:INFO: Stack free (bytes): " + stacks + "]");
         if (droppedLogLines() > 0) {
             out.line("[MSG:INFO: " + std::to_string(droppedLogLines()) + " log lines dropped (serial output was busy)]");
         }
@@ -218,7 +228,7 @@ bool submitLine(ChannelId ch, const std::string& line) {
 void submitRealtime(ChannelId ch, char c) {
     BufferSink sink;
     parser().realtime(c, sink);  // acts first; the reply must not hold up the next realtime char
-    sendTo(ch, sink.text, ch == kUart ? pdMS_TO_TICKS(50) : portMAX_DELAY);
+    sendTo(ch, std::move(sink.text), ch == kUart ? pdMS_TO_TICKS(50) : portMAX_DELAY);
 }
 
 static void executorTask(void*) {
@@ -227,7 +237,7 @@ static void executorTask(void*) {
         xQueueReceive(gQueue, &req, portMAX_DELAY);
         BufferSink sink;
         parser().execute(req->line, sink);
-        sendTo(req->ch, sink.text);
+        sendTo(req->ch, std::move(sink.text));
         delete req;
     }
 }
@@ -244,6 +254,9 @@ static void uartTask(void*) {
                     break;
                 case LineReader::Event::Line:
                     submitLine(kUart, reader.line());
+                    break;
+                case LineReader::Event::TooLong:
+                    sendTo(kUart, "[MSG:ERR: Line too long (max 256 characters), ignored]\nerror:2\n", pdMS_TO_TICKS(50));
                     break;
                 default:
                     break;
@@ -266,7 +279,7 @@ void startCommands() {
     gQueue = xQueueCreate(16, sizeof(Request*));
     setBroadcaster(broadcastAll);
     xTaskCreatePinnedToCore(executorTask, "cmd", 6144, nullptr, 5, nullptr, 0);
-    xTaskCreatePinnedToCore(uartTask, "uart", 3072, nullptr, 5, nullptr, 0);
+    xTaskCreatePinnedToCore(uartTask, "uart", 4096, nullptr, 5, nullptr, 0);
     ESP_LOGI(TAG, "serial command channel ready (try $H)");
 }
 

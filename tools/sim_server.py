@@ -9,6 +9,7 @@ the firmware. Saved settings go to .pio/sim/sim-config.txt (see --config).
 """
 import argparse
 import asyncio
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -101,7 +102,12 @@ async def config_post(request):
     body = await request.text()
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         f.write(body)
-    return web.Response(text=await request.app["sim"].request("P " + f.name), content_type="text/plain")
+    try:
+        text = await request.app["sim"].request("P " + f.name)
+    finally:
+        os.unlink(f.name)
+    status = 200 if text.rstrip().endswith("ok") else 400
+    return web.Response(text=text, status=status, content_type="text/plain")
 
 
 async def update_post(request):
