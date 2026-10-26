@@ -50,6 +50,10 @@ function servoIndices() {
   return out;
 }
 const servoActive = i => model.get(sp(i, 'enable')) === 'true' && (model.get(sp(i, 'pin')) || 'none') !== 'none';
+// $I reports "[SERVO:n pin none]" for servos without hardware (e.g. PCA9685 not fitted);
+// like the firmware, leave them out of the scene and the automatic period.
+const hasHardware = i => !hwInfo[i] || !/→ none( |$)/.test(hwInfo[i]);
+const servoLive = i => servoActive(i) && hasHardware(i);
 const servoName = i => model.get(sp(i, 'name')) || `Servo ${i}`;
 
 // ---------------------------------------------------------------------------
@@ -94,7 +98,7 @@ function effectivePeriod() {
   const p = num('/scene/period_ms');
   if (p > 0) return p;
   let longest = 0;
-  for (const i of servoIndices()) if (servoActive(i)) longest = Math.max(longest, servoCycle(servoParams(i)));
+  for (const i of servoIndices()) if (servoLive(i)) longest = Math.max(longest, servoCycle(servoParams(i)));
   return Math.max(longest, 100);
 }
 
@@ -424,9 +428,10 @@ function buildCard(i) {
 
 function updateCard(card, i) {
   const r = card._refs;
-  r.pinTag.textContent = `#${i} · ${model.get(sp(i, 'pin'))}${hwInfo[i] ? ' · ' + hwInfo[i].split('→ ')[1] : ''}`;
+  const hw = !hasHardware(i) ? 'no output' : hwInfo[i] ? hwInfo[i].split('→ ')[1] : '';
+  r.pinTag.textContent = `#${i} · ${model.get(sp(i, 'pin'))}${hw ? ' · ' + hw : ''}`;
   r.accel.hidden = model.get(sp(i, 'profile')) !== 'trap';
-  card.classList.toggle('disabled', !servoActive(i));
+  card.classList.toggle('disabled', !servoLive(i));
   for (const inp of card.querySelectorAll('input[type=range]')) inp.max = num(sp(i, 'range_deg'), 180);
   updateCardStatus(card, i);
 }
@@ -525,7 +530,7 @@ function drawPlot(canvas, i, tMs, period) {
 function renderTimeline() {
   const host = $('#timeline');
   if (host.closest('.tab').hidden) return;
-  const idx = servoIndices().filter(servoActive);
+  const idx = servoIndices().filter(servoLive);
   const period = effectivePeriod();
   const cycle = Math.floor(sceneTimeMs() / period);
   const w0 = cycle * period;  // start of the scene cycle being shown

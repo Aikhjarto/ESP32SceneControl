@@ -5,7 +5,7 @@
 
 Builds tools/sim/main.cpp together with src/core (g++), then serves web/ on
 http://localhost:8080/ with the same /ws protocol and /config.txt endpoints as
-the firmware. Saved settings go to .pio/sim/sim-config.txt.
+the firmware. Saved settings go to .pio/sim/sim-config.txt (see --config).
 """
 import argparse
 import asyncio
@@ -32,14 +32,15 @@ def build_sim():
 
 
 class Sim:
-    def __init__(self, exe):
+    def __init__(self, exe, config):
         self.exe = exe
+        self.config = config
         self.lock = asyncio.Lock()
         self.proc = None
 
     async def start(self):
         self.proc = await asyncio.create_subprocess_exec(
-            str(self.exe), str(BUILD / "sim-config.txt"),
+            str(self.exe), str(self.config),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
         await self.request("S")  # swallow boot output
 
@@ -123,10 +124,12 @@ async def on_startup(app):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--config", type=pathlib.Path, default=BUILD / "sim-config.txt",
+                    help="file the simulator saves its settings to (default: .pio/sim/sim-config.txt)")
     args = ap.parse_args()
 
     app = web.Application()
-    app["sim"] = Sim(build_sim())
+    app["sim"] = Sim(build_sim(), args.config)
     app["clients"] = set()
     app.on_startup.append(on_startup)
     app.router.add_get("/", static("index.html", "text/html"))

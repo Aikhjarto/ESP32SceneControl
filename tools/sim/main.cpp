@@ -6,7 +6,7 @@
 //   R <realtime char code>       e.g. "R 63" for '?'
 //   S                            status + positions, after advancing the scene clock
 //   D                            saved-format dump of changed settings
-//   P <file>                     replay a config file (restore)
+//   P <file>                     restore a config file (defaults first, then replay)
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
             std::ifstream f(req.substr(2));
             std::stringstream text;
             text << f.rdbuf();
-            parser.replay(text.str(), out);
+            parser.restore(text.str(), out);
             out.line("ok");
         }
         std::cout << ".\n" << std::flush;
