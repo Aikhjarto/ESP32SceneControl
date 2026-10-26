@@ -265,6 +265,15 @@ bool Outputs::allocateOutput(const Config& cfg, int out, std::string& log) {
         addLog(log, "output %d: gpio.%d cannot be used as an output", out, gpio);
         return false;
     }
+    // Boot strapping pins: a load pulling GPIO12 high at reset selects 1.8 V flash and the
+    // module does not boot; on 0, 2, 5 and 15 a pulling load changes the boot mode or log.
+    if (gpio == 12) {
+        addLog(log, "output %d: gpio.12 is a boot strapping pin (flash voltage), use another pin", out);
+        return false;
+    }
+    if (gpio == 0 || gpio == 2 || gpio == 5 || gpio == 15) {
+        addLog(log, "output %d: gpio.%d is a boot strapping pin; its load must not pull it at reset", out, gpio);
+    }
     if ((i2cUsed(cfg) && (pin == cfg.i2c.sda || pin == cfg.i2c.scl)) || pin == cfg.button.pin) {
         addLog(log, "output %d: gpio.%d is used by I2C or the button", out, gpio);
         return false;
@@ -333,16 +342,28 @@ void Outputs::initI2c(const Config& cfg, std::string& log) {
         return;
     }
     const uint32_t sclHz = std::clamp<uint32_t>(cfg.i2c.khz, 10, 1000) * 1000;
+    // Two boards on one address would both answer and overwrite each other: the second one
+    // configured is left out.
+    bool claimed[128] = {};
+    auto claim = [&](const char* kind, int b, uint32_t addr) {
+        if (addr < 128 && !claimed[addr]) {
+            claimed[addr] = true;
+            return true;
+        }
+        addLog(log, "%s board %d: address 0x%02lX is already used by another board", kind, b,
+               static_cast<unsigned long>(addr));
+        return false;
+    };
     for (int b = 0; b < kMaxPca; ++b) {
         const PcaConfig& p = cfg.pca[b];
-        if (!p.enable) continue;
+        if (!p.enable || !claim("PCA9685", b, p.addr)) continue;
         if (!pca_[b].begin(i2c_, static_cast<uint8_t>(p.addr), sclHz, p.freqHz, p.oscHz)) {
             addLog(log, "PCA9685 board %d not found at 0x%02lX", b, static_cast<unsigned long>(p.addr));
         }
     }
     for (int b = 0; b < kMaxPcf; ++b) {
         const PcfConfig& p = cfg.pcf[b];
-        if (!p.enable) continue;
+        if (!p.enable || !claim("PCF", b, p.addr)) continue;
         if (!pcf_[b].begin(i2c_, static_cast<uint8_t>(p.addr), sclHz, p.type == PcfType::Pcf8575)) {
             addLog(log, "PCF board %d not found at 0x%02lX", b, static_cast<unsigned long>(p.addr));
         }

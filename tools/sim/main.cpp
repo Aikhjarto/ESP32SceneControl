@@ -74,8 +74,10 @@ struct SimHost : Host {
         parser->replay(text.str(), sink);
         parser->markBooted();
         scene.reset();
-        scene.setServoRun(-1, true);
+        scene.setServoRun(-1, true);  // a restart forgets per-item states, as on the device
         scene.release(-1);
+        scene.setOutputRun(-1, true);
+        scene.outputRelease(-1);
         scene.setRunning(cfg.scene.autostart);
     }
 };

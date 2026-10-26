@@ -130,7 +130,8 @@ time and its own settings:
 | `pingpong` | Moves start↔stop continuously, with `dwell_ms` at both ends, independent of the cycle. |
 
 The scene cycle is `$/scene/period_ms`. If that is `0`, the cycle is the longest
-servo's delay + move + dwell + return, counting only servos that have working hardware.
+servo's delay + move + dwell + return, counting only servos that have working hardware,
+and at least as long as every digital output's sequence (see Digital outputs).
 When the cycle length changes, e.g. because you edit a servo, every return-mode servo
 switches smoothly from its old timeline to its new one, without stopping. Setting a
 fixed period shorter than a servo's cycle gives a warning, because that servo is cut off
@@ -141,8 +142,8 @@ Peak speed compared with a constant-speed move: `const` 1×, `trap` 1/(1−a) wh
 `tri` 2×, `sine` 1.57×, `bell` 1.875×. If a move would exceed `max_dps`, you get a warning.
 
 - **Global Stop** (button, `!`, header button) freezes the scene clock. Every servo holds its position, and **Go** carries on exactly where it stopped.
-- **Per-servo Stop** holds just that servo while the scene keeps running. On **Go** the servo *rejoins*: it blends from where it is onto its still-moving target with a minimum-jerk curve. The blend lasts at least `$/scene/rejoin_ms`, and is lengthened so that the blend's own correction stays under `max_dps`; while the target itself is moving, the servo briefly moves at up to the sum of both speeds. When the blend finishes, the servo is exactly back in sync.
-- **Other rejoins:** the same blend is used after a scene reset, after test mode, after re-enabling a servo, and after editing its motion while running. So no edit makes a servo jump.
+- **Per-servo Stop** holds just that servo while the scene keeps running. On **Go** the servo *rejoins*: starting from rest, it blends from where it is onto its still-moving target with smooth (minimum-jerk) curves. The position correction lasts at least `$/scene/rejoin_ms` and is lengthened so it stays under `max_dps`; while the target itself is moving, the servo briefly moves at up to the sum of both speeds. When the blend finishes, the servo is exactly back in sync.
+- **Other rejoins:** the same blend is used after a scene reset, after test mode, after re-enabling a servo (all from rest), and after editing a servo's motion or a change of the scene cycle while running. Those keep the servo's current speed and change it gradually (about 2000 °/s² at most, over at least 0.15 s), so a moving servo neither jumps nor stalls. While settling, a servo never leaves the range between its start and stop angles (or where it started from).
 
 ## Digital outputs
 
@@ -152,7 +153,8 @@ increasing, at most 16 points). Before the first point an output keeps the state
 last one, so a sequence wraps around the cycle. Outputs share the scene clock with the
 servos:
 
-- **Global Stop** holds every output in its current state, and **Go** continues.
+- **Global Stop** holds every output in its current state, and **Go** continues. While
+  held, editing a sequence takes effect on Go; Force, Release and per-output Go still act.
 - **Per-output Stop** (`$Output/Stop=n`) holds one output while the scene runs on; on
   **Go** it takes the scene's state again at once.
 - **Force** (`$Output/Set=n,on|off`) overrides one output for testing until `$Output/Release=n`.
@@ -162,7 +164,14 @@ PCF8574 (8 bits) and PCF8575 (16 bits) boards sit on the same I²C bus as the PC
 (`$/pcf/<0..7>/enable`, `type`, `addr`, default addresses 0x20–0x27; PCF8574A boards use
 0x38–0x3F). Their pins are quasi-bidirectional: "high" is only a weak pull-up, so drive
 LEDs or relay inputs **active low** (LED from V+ through a resistor to the pin, `invert=true`).
-Disabled outputs, and all outputs at boot, are "off".
+Disabled outputs, and all outputs at boot, are "off". Each PCF board is rewritten about once
+a second, so its pins are right again after an ESP restart or a brown-out of the board.
+GPIO12 is refused for outputs (a load pulling it high at reset stops the ESP32 from booting);
+GPIO 0, 2, 5 and 15 are allowed with a startup warning, as they are boot strapping pins too.
+
+With the automatic scene period, the cycle is at least as long as every output's last switch
+point, rounded up to the next full second; with a fixed `$/scene/period_ms`, switch points
+beyond it give a warning.
 
 In the web UI the **Outputs** tab has a card per output with its live state, a strip of
 the cycle, an editor for the switch points, Stop/Go and Force buttons. The **Timeline**

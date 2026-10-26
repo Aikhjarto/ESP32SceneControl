@@ -7,6 +7,7 @@ namespace ss {
 static const char* TAG = "pcf857x";
 
 constexpr int kTimeoutMs = 20;
+constexpr uint32_t kRefreshFlushes = 50;  // rewrite unchanged ports after this many flushes (~1 s)
 
 bool Pcf857x::begin(i2c_master_bus_handle_t bus, uint8_t addr, uint32_t sclHz, bool sixteenBit) {
     if (i2c_master_probe(bus, addr, kTimeoutMs) != ESP_OK) return false;
@@ -33,7 +34,9 @@ void Pcf857x::set(int bit, bool high) {
 }
 
 void Pcf857x::flush() {
-    if (!dev_ || !dirty_) return;
+    if (!dev_) return;
+    if (!dirty_ && ++idleFlushes_ < kRefreshFlushes) return;
+    idleFlushes_ = 0;
     const uint8_t buf[2] = {static_cast<uint8_t>(port_ & 0xFF), static_cast<uint8_t>(port_ >> 8)};  // P0x, then P1x
     if (i2c_master_transmit(dev_, buf, sixteen_ ? 2 : 1, kTimeoutMs) == ESP_OK) {
         dirty_ = false;

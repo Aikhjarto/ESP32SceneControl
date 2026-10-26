@@ -77,11 +77,12 @@ Measure **one servo per block** (servos 0–3 by default). The MCPWM clock setup
 
 ## 3b. Digital outputs (if used)
 
-- [ ] **GPIO output:** `$/out/0/pin=gpio.12`, `enable=true`, `seq=0:on,1000:off`, `$CS`, `$Bye`. The pin is high for 1 s at the start of every scene cycle (check with an LED + resistor or the scope). It is low right after boot and while the output is disabled.
+- [ ] **GPIO output:** all free GPIOs are servo pins by default, so free one first: `$/servo/15/pin=none`, then `$/out/0/pin=gpio.33`, `enable=true`, `seq=0:on,1000:off`, `$CS`, `$Bye`. The pin is high for 1 s at the start of every scene cycle (check with an LED + resistor or the scope). It is low right after boot and while the output is disabled.
 - [ ] **PCF board:** `$/pcf/0/enable=true` (and `type=pcf8575` for 16 bits), `$Bye`. `$I` shows `PCF8574 board 0 at 0x20 found` and an `[OUTPUT:n pcf.0.x pcf0.x]` line per output.
 - [ ] **PCF active low:** with an LED from V+ through a resistor to a PCF pin and `invert=true`, the LED lights exactly when the card's lamp is on.
 - [ ] **Hold and force:** global Stop freezes the outputs; `$Output/Stop=0` holds one while the others continue; `$Output/Set=0,on` forces it, `$Output/Release=0` returns to the sequence.
-- [ ] **Conflicts:** an output on a GPIO already used by a servo, I²C or the button, or on a disabled/missing PCF board, is reported by `$I` and stays inactive.
+- [ ] **Conflicts:** an output on a GPIO already used by a servo, I²C or the button, on GPIO12, or on a disabled/missing PCF board, is reported by `$I` and stays inactive. Two boards on the same I²C address are reported too.
+- [ ] **PCF after a warm restart:** switch an `invert=true` output on, then `$Bye`. After the restart it is off (rewritten within about a second), matching the UI.
 - [ ] **No I²C errors:** no `pcf857x … I2C write failed` lines in the log while outputs switch.
 
 ## 4. One real servo (MG90S)
@@ -171,6 +172,7 @@ Before these tests, bump `PROJECT_VER` in `CMakeLists.txt` (e.g. to `0.1.1`) and
 
 ## 10. Long run
 
+- [ ] **Heap:** `$I` shows `Heap free … largest block … lowest since boot`; the lowest value should stay above about 30 KB.
 - [ ] **Stack headroom:** after the long run, `$I` shows `Stack free` for each task. Every value should stay above about 512 bytes; report any task below that.
 - [ ] **Stability:** run the full scene for 1–2 hours with the UI open on a phone. No resets, panics or `Guru Meditation` lines in the log. `?` shows the scene time and cycle count rising steadily.
 - [ ] **Servo temperature:** check servo temperatures and the supply after the long run.

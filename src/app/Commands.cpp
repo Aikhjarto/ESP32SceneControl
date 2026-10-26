@@ -15,6 +15,7 @@
 #include "driver/uart_vfs.h"
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
+#include "esp_heap_caps.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -166,6 +167,11 @@ public:
             }
         }
         out.line("[MSG:INFO: Stack free (bytes): " + stacks + "]");
+        snprintf(buf, sizeof(buf), "[MSG:INFO: Heap free %u bytes, largest block %u, lowest since boot %u]",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)));
+        out.line(buf);
         if (droppedLogLines() > 0) {
             out.line("[MSG:INFO: " + std::to_string(droppedLogLines()) + " log lines dropped (serial output was busy)]");
         }

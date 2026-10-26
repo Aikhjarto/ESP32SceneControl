@@ -269,11 +269,8 @@ static esp_err_t configPost(httpd_req_t* req) {
         std::string text;
         void line(const std::string& t) override { text += t + "\n"; }
     } sink;
-    bool ok;
-    {
-        app::Locked l;  // one atomic restore, not interleaved with other channels
-        ok = app::parser().restore(body, sink);
-    }
+    // restore() parses without the lock and applies the result atomically under it.
+    const bool ok = app::parser().restore(body, sink);
     sink.text += ok ? "ok\n" : "error:2\n";
     httpd_resp_set_status(req, ok ? "200 OK" : "400 Bad Request");
     httpd_resp_set_type(req, "text/plain");

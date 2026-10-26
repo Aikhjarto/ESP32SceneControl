@@ -574,10 +574,10 @@ const outputName = i => model.get(op(i, 'name')) || `Output ${i}`;
 
 // "0:on,500:off" → [{t: 0, on: true}, {t: 500, on: false}] (mirrors src/core/Sequence.cpp)
 function parseSeq(text) {
+  // Points are separated by commas and/or spaces, as the firmware accepts.
   const rows = [];
-  for (const part of (text || '').split(',')) {
-    const m = /^\s*(\d+)\s*:\s*(\w+)\s*$/.exec(part);
-    if (m) rows.push({ t: Number(m[1]), on: /^(on|1|high)$/i.test(m[2]) });
+  for (const m of (text || '').matchAll(/(\d+)\s*:\s*([A-Za-z0-9]+)/g)) {
+    rows.push({ t: Number(m[1]), on: /^(on|1|high)$/i.test(m[2]) });
   }
   return rows;
 }
@@ -604,14 +604,13 @@ function buildOutputCard(i) {
   const pinTag = el('span', { class: 'idx' });
   const canvas = el('canvas', { class: 'strip' });
   const seqRows = el('div', { class: 'seq' });
-  const addPoint = el('button', {}, '+ Switch point');
-  addPoint.addEventListener('click', () => {
-    const rows = parseSeq(model.get(op(i, 'seq')));
-    const last = rows.length ? rows[rows.length - 1] : null;
-    rows.push({ t: last ? last.t + 500 : 0, on: last ? !last.on : true });
-    saveSeq(i, rows);
-  });
+  const addPoint = el('button', {}, '+ Switch point');  // handler set by renderSeqRows
   const test = (cmd) => () => send(cmd);
+  const removeBtn = el('button', { class: 'danger' }, 'Remove output');
+  removeBtn.addEventListener('click', async () => {
+    if (!confirm(`Remove output ${i} (${outputName(i)})? Its pin is freed after a restart.`)) return;
+    if (await setSetting(op(i, 'pin'), 'none')) renderAll();
+  });
   const card = el('div', { class: 'card', 'data-output': i },
     el('div', { class: 'card-head' }, runBtn, name, stateTag, lamp, enable),
     el('div', { class: 'card-head' }, pinTag),
@@ -622,41 +621,63 @@ function buildOutputCard(i) {
       el('button', { onclick: test(`$Output/Set=${i},on`), title: 'Force on until released' }, 'Force on'),
       el('button', { onclick: test(`$Output/Set=${i},off`), title: 'Force off until released' }, 'Force off'),
       el('button', { onclick: test(`$Output/Release=${i}`), title: 'Follow the sequence again' }, 'Release')),
-    el('div', { class: 'fields' }, genericField(op(i, 'invert'), 'invert (active low)')));
-  card._refs = { runBtn, lamp, stateTag, pinTag, canvas, seqRows };
+    el('div', { class: 'fields' },
+      genericField(op(i, 'invert'), 'invert (active low)'),
+      genericField(op(i, 'pin'), 'pin (restart)')),
+    el('div', { class: 'row-buttons' }, removeBtn));
+  card._refs = { runBtn, lamp, stateTag, pinTag, canvas, seqRows, addPoint };
+  renderSeqRows(card, i);
   updateOutputCard(card, i);
   return card;
 }
 
-// Sends the whole sequence; on rejection the editor shows the device's value again.
+// Sends the whole sequence and redraws the editor from the device's answer (also when the
+// device rejects it, so the editor never shows points the device does not have).
 async function saveSeq(i, rows) {
   rows.sort((a, b) => a.t - b.t);
   await setSetting(op(i, 'seq'), seqText(rows));
   const card = document.querySelector(`.card[data-output="${i}"]`);
-  if (card) updateOutputCard(card, i);
+  if (card) {
+    renderSeqRows(card, i);
+    updateOutputCard(card, i);
+  }
+}
+
+// The editor's rows as they are on screen right now (including unsaved typing).
+function editorRows(card) {
+  return [...card._refs.seqRows.children].map((row) => ({ t: row._t.value.trim(), on: row._s.value === 'on' }));
 }
 
 function renderSeqRows(card, i) {
   const rows = parseSeq(model.get(op(i, 'seq')));
-  const edit = () => {
-    const next = [...card._refs.seqRows.children].map((row) => ({
-      t: Number(row._t.value.replace(',', '.')), on: row._s.value === 'on' }));
-    if (next.some((r) => !Number.isInteger(r.t) || r.t < 0)) { toast('Times must be whole milliseconds', true); updateOutputCard(card, i); return; }
-    saveSeq(i, next);
+  // Every handler reads the rows at the moment it runs, never a copy from an older render.
+  const commit = (next) => {
+    if (next.some((r) => !/^\d+$/.test(String(r.t)))) {
+      toast('Times must be whole milliseconds', true);
+      renderSeqRows(card, i);
+      return;
+    }
+    saveSeq(i, next.map((r) => ({ t: Number(r.t), on: r.on })));
   };
-  card._refs.seqRows.replaceChildren(...rows.map((r, k) => {
+  card._refs.seqRows.replaceChildren(...rows.map((r) => {
     const t = el('input', { type: 'text', inputmode: 'numeric', value: r.t });
     const st = el('select', {}, el('option', { value: 'on' }, 'on'), el('option', { value: 'off' }, 'off'));
     st.value = r.on ? 'on' : 'off';
-    t.addEventListener('change', edit);
-    st.addEventListener('change', edit);
+    t.addEventListener('change', () => commit(editorRows(card)));
+    st.addEventListener('change', () => commit(editorRows(card)));
     const del = el('button', { title: 'Remove this point' }, '✕');
-    del.addEventListener('click', () => saveSeq(i, rows.filter((_, j) => j !== k)));
     const row = el('div', { class: 'seq-row' }, t, st, del);
+    del.addEventListener('click', () => commit(editorRows(card).filter((_, j) => j !== [...card._refs.seqRows.children].indexOf(row))));
     row._t = t;
     row._s = st;
     return row;
   }));
+  card._refs.addPoint.onclick = () => {
+    const next = editorRows(card);
+    const last = next.length ? next[next.length - 1] : null;
+    next.push({ t: last && /^\d+$/.test(last.t) ? Number(last.t) + 500 : 0, on: last ? !last.on : true });
+    commit(next);
+  };
 }
 
 function updateOutputCard(card, i) {
@@ -664,7 +685,11 @@ function updateOutputCard(card, i) {
   const hw = !outHasHardware(i) ? 'no output' : outHw[i] ? outHw[i].split('→ ')[1] : '';
   r.pinTag.textContent = `#${i} · ${model.get(op(i, 'pin'))}${hw ? ' · ' + hw : ''}`;
   card.classList.toggle('disabled', !outputLive(i));
-  if (!card.contains(document.activeElement)) renderSeqRows(card, i);
+  // Redraw the points when they changed elsewhere, unless someone is typing in them.
+  const typing = card._refs.seqRows.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON';
+  if (!typing && seqText(editorRows(card).map((x) => ({ t: x.t, on: x.on }))) !== seqText(parseSeq(model.get(op(i, 'seq'))))) {
+    renderSeqRows(card, i);
+  }
   updateOutputStatus(card, i);
 }
 
