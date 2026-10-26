@@ -9,15 +9,18 @@ namespace ss {
 
 constexpr int kMaxServos = 64;
 constexpr int kMaxPca = 4;
+constexpr int kMaxOutputs = 64;      // digital outputs
+constexpr int kMaxPcf = 8;           // PCF8574/PCF8575 port expanders
+constexpr int kMaxSwitchPoints = 16; // per digital output sequence
 constexpr int kPcaChannels = 16;
 
-enum class PinType : uint8_t { None, Gpio, Pca };
+enum class PinType : uint8_t { None, Gpio, Pca, Pcf };
 
-// "none", "gpio.13" or "pca.<board>.<channel>"
+// "none", "gpio.13", "pca.<board>.<channel>" (servos) or "pcf.<board>.<bit>" (digital outputs)
 struct PinSpec {
     PinType type;
-    uint8_t board;  // PCA9685 board index
-    uint8_t num;    // GPIO number or PCA channel
+    uint8_t board;  // PCA9685 / PCF857x board index
+    uint8_t num;    // GPIO number, PCA channel or PCF bit
 
     bool operator==(const PinSpec& o) const { return type == o.type && board == o.board && num == o.num; }
     bool operator!=(const PinSpec& o) const { return !(*this == o); }
@@ -26,6 +29,7 @@ struct PinSpec {
 constexpr PinSpec pinNone() { return {PinType::None, 0, 0}; }
 constexpr PinSpec pinGpio(uint8_t n) { return {PinType::Gpio, 0, n}; }
 constexpr PinSpec pinPca(uint8_t board, uint8_t ch) { return {PinType::Pca, board, ch}; }
+constexpr PinSpec pinPcf(uint8_t board, uint8_t bit) { return {PinType::Pcf, board, bit}; }
 
 enum class Profile : uint8_t { Const, Trap, Tri, Sine, Bell, Count };
 enum class Mode : uint8_t { Once, Return, PingPong, Count };
@@ -94,18 +98,41 @@ struct NetConfig {
     bool captive;
 };
 
+// Digital output: switches on/off at the points of its sequence, every scene cycle.
+struct OutputConfig {
+    char name[16];
+    PinSpec pin;   // gpio.N or pcf.B.C
+    bool enable;
+    bool invert;   // output level low when "on" (active-low LEDs, relay boards)
+    char seq[200]; // switch points "ms:on|off,..." within the scene cycle, e.g. "0:on,500:off"
+                   // (fits kMaxSwitchPoints points with 7-digit times)
+};
+
+enum class PcfType : uint8_t { Pcf8574, Pcf8575, Count };
+
+struct PcfConfig {
+    bool enable;
+    PcfType type;
+    uint32_t addr;
+};
+
 struct Config {
     ServoConfig servo[kMaxServos];
+    OutputConfig out[kMaxOutputs];
     SceneConfig scene;
     PwmConfig pwm;
     I2cConfig i2c;
     PcaConfig pca[kMaxPca];
+    PcfConfig pcf[kMaxPcf];
     ButtonConfig button;
     NetConfig net;
 };
 
 void setDefaults(Config& cfg);
 const Config& defaultConfig();
+
+// Digital output is wired to something and switched on.
+inline bool outputActive(const OutputConfig& o) { return o.enable && o.pin.type != PinType::None; }
 
 // Servo is wired to something and switched on.
 inline bool servoActive(const ServoConfig& s) { return s.enable && s.pin.type != PinType::None; }

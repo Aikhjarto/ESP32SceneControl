@@ -8,6 +8,8 @@ WiFi access point, or over USB serial with FluidNC-style `$` commands.
 
 - Uses every on-chip PWM block: LEDC high-speed (8), LEDC low-speed (8), MCPWM0 (6), MCPWM1 (6)
 - Optional PCA9685 I²C boards, 16 servos each (up to 4 boards)
+- Up to 64 named digital outputs (lights, relays, …) on free GPIOs or PCF8574/PCF8575
+  port expanders (up to 8 boards), switched by on/off sequences on the same scene clock
 - Profiles: `const`, `trap` (adjustable acceleration share), `tri`, `sine`, `bell` (minimum jerk)
 - Global Stop/Go via a push button, the web UI or commands; Stop/Go per servo
 - A servo that was stopped blends smoothly back into the running choreography
@@ -22,6 +24,7 @@ Target: ESP32 (classic) DevKit with a WROOM module, 4 MB flash.
 |---|---|
 | Servos 0–15 | GPIO 2, 4, 5, 13, 14, 15, 16, 17, 18, 19, 23, 25, 26, 27, 32, 33 |
 | Servos 16–31 | PCA9685 board 0 (0x40), channels 0–15 |
+| Digital outputs | none by default; any free GPIO or a PCF8574/PCF8575 bit (`pcf.<board>.<bit>`) |
 | I²C (PCA9685) | SDA GPIO 21, SCL GPIO 22, 400 kHz |
 | Stop/Go button | GPIO 0 = the DevKit's **BOOT** button (active low, internal pull-up) |
 | Serial console | UART0 (USB), 115200 baud |
@@ -141,6 +144,30 @@ Peak speed compared with a constant-speed move: `const` 1×, `trap` 1/(1−a) wh
 - **Per-servo Stop** holds just that servo while the scene keeps running. On **Go** the servo *rejoins*: it blends from where it is onto its still-moving target with a minimum-jerk curve. The blend lasts at least `$/scene/rejoin_ms`, and is lengthened so that the blend's own correction stays under `max_dps`; while the target itself is moving, the servo briefly moves at up to the sum of both speeds. When the blend finishes, the servo is exactly back in sync.
 - **Other rejoins:** the same blend is used after a scene reset, after test mode, after re-enabling a servo, and after editing its motion while running. So no edit makes a servo jump.
 
+## Digital outputs
+
+Each output has a name and a sequence of switch points within the scene cycle, e.g.
+`$/out/0/seq=0:on,500:off,1200:on,1500:off` (times in ms from the start of the cycle,
+increasing, at most 16 points). Before the first point an output keeps the state of the
+last one, so a sequence wraps around the cycle. Outputs share the scene clock with the
+servos:
+
+- **Global Stop** holds every output in its current state, and **Go** continues.
+- **Per-output Stop** (`$Output/Stop=n`) holds one output while the scene runs on; on
+  **Go** it takes the scene's state again at once.
+- **Force** (`$Output/Set=n,on|off`) overrides one output for testing until `$Output/Release=n`.
+- `invert=true` drives the pin low for "on" (active-low LEDs, relay boards).
+
+PCF8574 (8 bits) and PCF8575 (16 bits) boards sit on the same I²C bus as the PCA9685
+(`$/pcf/<0..7>/enable`, `type`, `addr`, default addresses 0x20–0x27; PCF8574A boards use
+0x38–0x3F). Their pins are quasi-bidirectional: "high" is only a weak pull-up, so drive
+LEDs or relay inputs **active low** (LED from V+ through a resistor to the pin, `invert=true`).
+Disabled outputs, and all outputs at boot, are "off".
+
+In the web UI the **Outputs** tab has a card per output with its live state, a strip of
+the cycle, an editor for the switch points, Stop/Go and Force buttons. The **Timeline**
+shows the outputs below the servos.
+
 ## Commands (serial and WebSocket)
 
 Syntax follows FluidNC. Each command line is answered with `ok`, or with `error:N`
@@ -168,6 +195,9 @@ holding just that character.
 | `$Servo/Test=n,deg` | Drive servo n to an angle at up to `max_dps` (calibration) |
 | `$Servo/Release=n` | Leave test mode and rejoin the scene (`*` = all) |
 | `$Positions` | Current output angles, e.g. `[POS:0=45.0,1=90.5]` |
+| `$Outputs` | Current digital output states, e.g. `[OUT:0=1,3=0]` |
+| `$Output/Stop=n` / `$Output/Go=n` | Hold or resume one digital output (`*` = all) |
+| `$Output/Set=n,on\|off` | Force a digital output (testing) until `$Output/Release=n` (`*` = all) |
 | `$Firmware/Update[=url]` | Download and install signed firmware (default `http://<first client>:9999/firmware.bin`; `http://` only); progress as `[OTA:download 40%]` |
 
 Error codes: 2 bad value, 3 unknown command, 4 out of range, 5 unknown setting,
@@ -210,6 +240,17 @@ Paths are case-insensitive. "R" means the change applies after a restart (`$Bye`
 | `/pwm/ledc_freq_hz`, `/pwm/mcpwm_freq_hz` | 50 (40–1000; digital servos may accept more) | R |
 | `/i2c/sda`, `/i2c/scl`, `/i2c/khz` | `gpio.21`, `gpio.22`, 400 | R |
 | `/pca/<0..3>/enable`, `addr`, `freq_hz`, `osc_hz` | board 0 on at 0x40, 50 Hz, 25000000 | R |
+| `/pcf/<0..7>/enable`, `type`, `addr` | off, `pcf8574`, 0x20 + board | R |
+
+**`/out/<0..63>/…`** (digital outputs)
+
+| Field | Default | Range / values | |
+|---|---|---|---|
+| `name` | empty | up to 15 characters | |
+| `pin` | `none` | `none`, `gpio.N`, `pcf.<board>.<bit>` | R |
+| `enable` | `false` | `true`/`false` | |
+| `invert` | `false` | `true` = low when on | |
+| `seq` | empty | switch points `ms:on\|off,…` | |
 | `/button/pin`, `active_low`, `pullup` | `gpio.0`, `true`, `true` | R |
 | `/button/debounce_ms` | 30 | |
 | `$AP/SSID` | empty = `ServoScene-XXXX` | R |
@@ -238,10 +279,12 @@ the backed-up configuration. Press Save afterwards to keep it.
 src/core/      portable logic, unit-tested on the PC
   Config       configuration structs and defaults
   Motion       profiles, target angle over scene time, angle → pulse
-  Scene        scene clock, per-servo stop, rejoin blend, test mode
+  Scene        scene clock, per-servo/output stop, settle blend, test mode, digital output states
+  Sequence     switch-point sequences of digital outputs
   Settings     settings tree: paths, types, ranges, save format
   Parser       FluidNC-style command parser (serial, WebSocket, boot replay)
-src/out/       LEDC / MCPWM / PCA9685 drivers and the channel allocator
+  LineReader   serial line assembly, realtime characters
+src/out/       LEDC / MCPWM / PCA9685 / PCF857x drivers and the channel allocator
 src/app/       shared state and lock, 50 Hz motion task + button, command executor, NVS
 src/net/       WiFi access point, web server + WebSocket, captive DNS, OTA + signature check
 web/           UI (embedded gzipped at build time by scripts/embed_web.py)

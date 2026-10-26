@@ -44,6 +44,10 @@ void setDefaults(Config& cfg) {
     for (int b = 0; b < kMaxPca; ++b) {
         cfg.pca[b] = {b == 0, static_cast<uint32_t>(0x40 + b), 50, 25000000};
     }
+    for (int i = 0; i < kMaxOutputs; ++i) cfg.out[i].pin = pinNone();  // memset: disabled, empty sequence
+    for (int b = 0; b < kMaxPcf; ++b) {
+        cfg.pcf[b] = {false, PcfType::Pcf8574, static_cast<uint32_t>(0x20 + b)};
+    }
     cfg.button = {pinGpio(0), true, true, 30};  // BOOT button on DevKit boards
 
     NetConfig& n = cfg.net;

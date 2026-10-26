@@ -5,8 +5,9 @@
 const PROFILES = ['const', 'trap', 'tri', 'sine', 'bell'];
 const MODES = ['once', 'return', 'pingpong'];
 const DRIVERS = ['auto', 'ledc', 'mcpwm'];
-const ENUMS = { profile: PROFILES, mode: MODES, driver: DRIVERS };
+const ENUMS = { profile: PROFILES, mode: MODES, driver: DRIVERS, type: ['pcf8574', 'pcf8575'] };
 const MAX_SERVOS = 64;
+const MAX_OUTPUTS = 64;
 const REPLY_TIMEOUT_MS = 10000;
 const SIGNED_FIELDS = new Set(['trim_us']);  // may be negative: iOS decimal keypads have no minus key
 
@@ -30,7 +31,11 @@ function el(tag, attrs = {}, ...children) {
 const model = new Map();   // "/servo/3/start_deg" or "AP/SSID" → value string
 const hwInfo = {};         // servo → "gpio.13 ledc-hs.0"
 const positions = {};      // servo → current output angle
-let status = { run: false, t: 0, cyc: 0, stop: new Set(), rejoin: new Set(), test: new Set() };
+const outHw = {};          // digital output → "gpio.12 → pcf0.3"
+const outStates = {};      // digital output → true when on (from [OUT:...])
+const emptyStatus = () => ({ run: false, t: 0, cyc: 0, stop: new Set(), rejoin: new Set(), test: new Set(),
+  ostop: new Set(), otest: new Set() });
+let status = emptyStatus();
 let statusAt = performance.now();
 let dirty = false;
 let bootWarnings = [];
@@ -204,6 +209,7 @@ function handleLine(l, isReply = false) {
     return;
   }
   if (l.startsWith('[POS:')) { parsePositions(l); return; }
+  if (l.startsWith('[OUT:')) { parseOutputStates(l); return; }
   if (!muted) logLine(l, l.startsWith('error') || l.startsWith('[MSG:ERR') ? 'err' : '');
 
   if (l[0] === '$') {
@@ -212,6 +218,9 @@ function handleLine(l, isReply = false) {
   } else if (l.startsWith('[SERVO:')) {
     const m = /^\[SERVO:(\d+) (\S+) (.+)\]$/.exec(l);
     if (m) hwInfo[m[1]] = `${m[2]} → ${m[3]}`;
+  } else if (l.startsWith('[OUTPUT:')) {
+    const m = /^\[OUTPUT:(\d+) (\S+) (.+)\]$/.exec(l);
+    if (m) outHw[m[1]] = `${m[2]} → ${m[3]}`;
   } else if (l.startsWith('[UPDATE:')) {
     setDefaultUpdateUrl(l.slice(8, -1));
   } else if (l.startsWith('[OTA:')) {
@@ -236,18 +245,28 @@ function handleLine(l, isReply = false) {
 
 function parseStatus(l) {
   const parts = l.slice(1, -1).split('|');
-  const s = { run: parts[0] === 'Run', t: 0, cyc: 0, stop: new Set(), rejoin: new Set(), test: new Set() };
+  const s = emptyStatus();
+  s.run = parts[0] === 'Run';
   for (const p of parts.slice(1)) {
     const [k, v] = p.split(':');
     if (k === 'T') s.t = parseFloat(v);
     else if (k === 'Cyc') s.cyc = parseInt(v, 10);
-    else if (k === 'Stop' || k === 'Rejoin' || k === 'Test') {
+    else if (['Stop', 'Rejoin', 'Test', 'OStop', 'OTest'].includes(k)) {
       s[k.toLowerCase()] = new Set(v.split(',').map(Number));
     }
   }
   status = s;
   statusAt = performance.now();
   updateStatusUi();
+}
+
+function parseOutputStates(l) {
+  for (const k of Object.keys(outStates)) delete outStates[k];
+  for (const kv of l.slice(5, -1).split(',')) {
+    const [i, v] = kv.split('=');
+    if (v !== undefined) outStates[i] = v === '1';
+  }
+  for (const card of document.querySelectorAll('.card[data-output]')) updateOutputStatus(card, Number(card.dataset.output));
 }
 
 function parsePositions(l) {
@@ -260,6 +279,7 @@ function parsePositions(l) {
 async function loadAll() {
   model.clear();
   for (const k of Object.keys(hwInfo)) delete hwInfo[k];
+  for (const k of Object.keys(outHw)) delete outHw[k];
   muted = true;  // a full listing would flood the console and raise toasts for old boot warnings
   try {
     await send('$$', { quiet: true });
@@ -333,6 +353,11 @@ function onModelChanged(path) {
     if (m[2] === 'name') renderCalibrateList();
     if (m[2] === 'range_deg') updateCalibrateRange();
   }
+  const o = /^\/out\/(\d+)\/(\w+)$/.exec(path);
+  if (o) {
+    const card = document.querySelector(`.card[data-output="${o[1]}"]`);
+    if (card) updateOutputCard(card, Number(o[1]));
+  }
   renderTimeline();
 }
 
@@ -382,7 +407,8 @@ function updateStatusUi() {
   btn.textContent = status.run ? 'Stop' : 'Go';
   btn.className = `big ${status.run ? 'stop' : 'go'}`;
   $('#clock').textContent = `T ${status.t.toFixed(1)} s · cycle ${status.cyc}`;
-  for (const card of document.querySelectorAll('.card')) updateCardStatus(card, Number(card.dataset.servo));
+  for (const card of document.querySelectorAll('.card[data-servo]')) updateCardStatus(card, Number(card.dataset.servo));
+  for (const card of document.querySelectorAll('.card[data-output]')) updateOutputStatus(card, Number(card.dataset.output));
 }
 
 // ---------------------------------------------------------------------------
@@ -529,18 +555,199 @@ function drawPlot(canvas, i, tMs, period) {
 }
 
 // ---------------------------------------------------------------------------
+// Digital outputs
+
+const op = (i, f) => `/out/${i}/${f}`;
+
+function outputIndices() {
+  const out = [];
+  for (let i = 0; i < MAX_OUTPUTS; i++) {
+    const pin = model.get(op(i, 'pin'));
+    if (pin && pin !== 'none') out.push(i);
+  }
+  return out;
+}
+const outputActive = i => model.get(op(i, 'enable')) === 'true' && (model.get(op(i, 'pin')) || 'none') !== 'none';
+const outHasHardware = i => !outHw[i] || !/→ none( |$)/.test(outHw[i]);
+const outputLive = i => outputActive(i) && outHasHardware(i);
+const outputName = i => model.get(op(i, 'name')) || `Output ${i}`;
+
+// "0:on,500:off" → [{t: 0, on: true}, {t: 500, on: false}] (mirrors src/core/Sequence.cpp)
+function parseSeq(text) {
+  const rows = [];
+  for (const part of (text || '').split(',')) {
+    const m = /^\s*(\d+)\s*:\s*(\w+)\s*$/.exec(part);
+    if (m) rows.push({ t: Number(m[1]), on: /^(on|1|high)$/i.test(m[2]) });
+  }
+  return rows;
+}
+const seqText = (rows) => rows.map((r) => `${r.t}:${r.on ? 'on' : 'off'}`).join(',');
+
+function seqState(rows, tMs) {
+  if (!rows.length) return false;
+  let state = rows[rows.length - 1].on;  // wraps around from the end of the previous cycle
+  for (const r of rows) { if (r.t > tMs) break; state = r.on; }
+  return state;
+}
+
+function renderOutputCards() {
+  $('#outCards').replaceChildren(...outputIndices().map(buildOutputCard));
+}
+
+function buildOutputCard(i) {
+  const runBtn = el('button', { class: 'run-toggle', title: 'Stop / go this output' });
+  runBtn.addEventListener('click', () => send(`${status.ostop.has(i) ? '$Output/Go' : '$Output/Stop'}=${i}`));
+  const name = bind(el('input', { class: 'name', placeholder: `Output ${i}`, maxlength: 15 }), op(i, 'name'));
+  const enable = bind(el('input', { type: 'checkbox', title: 'Enabled' }), op(i, 'enable'));
+  const lamp = el('span', { class: 'lamp', title: 'Current state' });
+  const stateTag = el('span', { class: 'tag' });
+  const pinTag = el('span', { class: 'idx' });
+  const canvas = el('canvas', { class: 'strip' });
+  const seqRows = el('div', { class: 'seq' });
+  const addPoint = el('button', {}, '+ Switch point');
+  addPoint.addEventListener('click', () => {
+    const rows = parseSeq(model.get(op(i, 'seq')));
+    const last = rows.length ? rows[rows.length - 1] : null;
+    rows.push({ t: last ? last.t + 500 : 0, on: last ? !last.on : true });
+    saveSeq(i, rows);
+  });
+  const test = (cmd) => () => send(cmd);
+  const card = el('div', { class: 'card', 'data-output': i },
+    el('div', { class: 'card-head' }, runBtn, name, stateTag, lamp, enable),
+    el('div', { class: 'card-head' }, pinTag),
+    canvas,
+    el('div', { class: 'seq-row seq-head' }, el('span', {}, 'time ms'), el('span', {}, 'state'), el('span', {})),
+    seqRows,
+    el('div', { class: 'row-buttons' }, addPoint,
+      el('button', { onclick: test(`$Output/Set=${i},on`), title: 'Force on until released' }, 'Force on'),
+      el('button', { onclick: test(`$Output/Set=${i},off`), title: 'Force off until released' }, 'Force off'),
+      el('button', { onclick: test(`$Output/Release=${i}`), title: 'Follow the sequence again' }, 'Release')),
+    el('div', { class: 'fields' }, genericField(op(i, 'invert'), 'invert (active low)')));
+  card._refs = { runBtn, lamp, stateTag, pinTag, canvas, seqRows };
+  updateOutputCard(card, i);
+  return card;
+}
+
+// Sends the whole sequence; on rejection the editor shows the device's value again.
+async function saveSeq(i, rows) {
+  rows.sort((a, b) => a.t - b.t);
+  await setSetting(op(i, 'seq'), seqText(rows));
+  const card = document.querySelector(`.card[data-output="${i}"]`);
+  if (card) updateOutputCard(card, i);
+}
+
+function renderSeqRows(card, i) {
+  const rows = parseSeq(model.get(op(i, 'seq')));
+  const edit = () => {
+    const next = [...card._refs.seqRows.children].map((row) => ({
+      t: Number(row._t.value.replace(',', '.')), on: row._s.value === 'on' }));
+    if (next.some((r) => !Number.isInteger(r.t) || r.t < 0)) { toast('Times must be whole milliseconds', true); updateOutputCard(card, i); return; }
+    saveSeq(i, next);
+  };
+  card._refs.seqRows.replaceChildren(...rows.map((r, k) => {
+    const t = el('input', { type: 'text', inputmode: 'numeric', value: r.t });
+    const st = el('select', {}, el('option', { value: 'on' }, 'on'), el('option', { value: 'off' }, 'off'));
+    st.value = r.on ? 'on' : 'off';
+    t.addEventListener('change', edit);
+    st.addEventListener('change', edit);
+    const del = el('button', { title: 'Remove this point' }, '✕');
+    del.addEventListener('click', () => saveSeq(i, rows.filter((_, j) => j !== k)));
+    const row = el('div', { class: 'seq-row' }, t, st, del);
+    row._t = t;
+    row._s = st;
+    return row;
+  }));
+}
+
+function updateOutputCard(card, i) {
+  const r = card._refs;
+  const hw = !outHasHardware(i) ? 'no output' : outHw[i] ? outHw[i].split('→ ')[1] : '';
+  r.pinTag.textContent = `#${i} · ${model.get(op(i, 'pin'))}${hw ? ' · ' + hw : ''}`;
+  card.classList.toggle('disabled', !outputLive(i));
+  if (!card.contains(document.activeElement)) renderSeqRows(card, i);
+  updateOutputStatus(card, i);
+}
+
+function updateOutputStatus(card, i) {
+  const r = card._refs;
+  if (!r) return;
+  const stopped = status.ostop.has(i);
+  r.runBtn.textContent = stopped ? '▶' : '⏸';
+  r.runBtn.className = `run-toggle ${stopped ? 'stopped' : 'running'}`;
+  r.runBtn.title = stopped ? 'Go: follow the sequence again' : 'Stop: hold this output';
+  card.classList.toggle('stopped', stopped);
+  const tag = status.otest.has(i) ? 'forced' : stopped ? 'stopped' : '';
+  r.stateTag.textContent = tag;
+  r.stateTag.hidden = !tag;
+  r.stateTag.className = 'tag warn';
+  const on = !!outStates[i];
+  r.lamp.classList.toggle('on', on);
+  r.lamp.title = on ? 'On' : 'Off';
+}
+
+// On/off over one scene cycle, cursor at the current scene time.
+function drawStrip(canvas, i, tMs, period) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w) return;
+  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const css = getComputedStyle(document.documentElement);
+  const rows = parseSeq(model.get(op(i, 'seq')));
+  const x = (t) => (Math.min(t, period) / period) * w;
+  ctx.fillStyle = css.getPropertyValue('--track');
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = css.getPropertyValue('--warn');
+  let on = seqState(rows, 0), from = 0;
+  for (const r of rows) {
+    if (r.t >= period) break;
+    if (on && !r.on) ctx.fillRect(x(from), 4, x(r.t) - x(from), h - 8);
+    if (!on && r.on) from = r.t;
+    on = r.on;
+  }
+  if (on) ctx.fillRect(x(from), 4, w - x(from), h - 8);
+  const c = x(tMs % period);
+  ctx.strokeStyle = css.getPropertyValue('--stop');
+  ctx.beginPath();
+  ctx.moveTo(c, 0);
+  ctx.lineTo(c, h);
+  ctx.stroke();
+}
+
+function addOutput() {
+  const used = new Set(outputIndices());
+  let free = -1;
+  for (let i = 0; i < MAX_OUTPUTS; i++) if (!used.has(i)) { free = i; break; }
+  if (free < 0) { toast(`All ${MAX_OUTPUTS} output slots are in use`, true); return; }
+  const pin = prompt(`Pin for output ${free} (gpio.N or pcf.B.C):`, 'pcf.0.0');
+  if (!pin) return;
+  (async () => {
+    if (!(await setSetting(op(free, 'pin'), pin.trim()))) return;
+    await setSetting(op(free, 'enable'), 'true');
+    await send(`$/out/${free}`, { quiet: true });  // fetch all fields of the new slot
+    muted = true;  // re-read the hardware map (the new output gets hardware after a restart)
+    try { await send('$I', { quiet: true }); } finally { muted = false; }
+    renderAll();
+    showTab('outputs');
+  })();
+}
+
+// ---------------------------------------------------------------------------
 // Timeline
 
 function renderTimeline() {
   const host = $('#timeline');
   if (host.closest('.tab').hidden) return;
   const idx = servoIndices().filter(servoLive);
+  const oidx = outputIndices().filter(outputLive);
   const period = effectivePeriod();
   const cycle = Math.floor(sceneTimeMs() / period);
   const w0 = cycle * period;  // start of the scene cycle being shown
   // Drawn at the real pixel width so labels stay readable on phones.
   const W = Math.max(host.clientWidth, 320), label = W < 600 ? 72 : 110, rowH = 22, top = 20;
-  const H = top + idx.length * rowH + 6;
+  const rowCount = idx.length + (oidx.length ? oidx.length + 1 : 0);  // + "Outputs" heading
+  const H = top + rowCount * rowH + 6;
   const sx = (t) => label + (Math.min(t, period) / period) * (W - label - 6);
   const ns = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(ns, 'svg');
@@ -587,6 +794,26 @@ function renderTimeline() {
       bar(c + s.delay + s.dur, c + s.delay + s.dur + s.dwell, 'dwell');
       bar(c + s.delay + s.dur + s.dwell, c + s.delay + 2 * s.dur + s.dwell, 'move');
     }
+  });
+  if (oidx.length) add('text', { x: 4, y: top + idx.length * rowH + 15, class: 'section' }, 'Outputs');
+  oidx.forEach((i, k) => {
+    const y = top + (idx.length + 1 + k) * rowH;
+    const g = status.ostop.has(i) ? 'stopped' : '';
+    add('text', { x: 4, y: y + 15 }, outputName(i).slice(0, W < 600 ? 10 : 16));
+    add('rect', { x: label, y: y + 3, width: W - label - 6, height: rowH - 6, class: `track ${g}` });
+    const bar = (t0, t1) => {
+      const a = Math.max(t0, 0), b = Math.min(t1, period);
+      if (b > a) add('rect', { x: sx(a), y: y + 3, width: Math.max(1, sx(b) - sx(a)), height: rowH - 6, rx: 3, class: `on ${g}` });
+    };
+    const rows = parseSeq(model.get(op(i, 'seq')));
+    let on = seqState(rows, 0), from = 0;  // the sequence repeats every scene cycle
+    for (const r of rows) {
+      if (r.t >= period) break;
+      if (on && !r.on) bar(from, r.t);
+      if (!on && r.on) from = r.t;
+      on = r.on;
+    }
+    if (on) bar(from, period);
   });
   const cursor = add('line', { x1: label, x2: label, y1: top - 4, y2: H, class: 'cursor' });
   host._cursor = { cursor, sx, period, cycle };
@@ -667,9 +894,10 @@ const GROUP_TITLES = { scene: 'Scene', pwm: 'PWM frequencies', i2c: 'I²C bus', 
 function renderSettings() {
   const groups = new Map();
   for (const path of model.keys()) {
-    if (path.startsWith('/servo/')) continue;
+    if (path.startsWith('/servo/') || path.startsWith('/out/')) continue;
     let key;
     if (path.startsWith('/pca/')) key = `PCA9685 board ${path.split('/')[2]}`;
+    else if (path.startsWith('/pcf/')) key = `PCF8574/8575 board ${path.split('/')[2]}`;
     else if (path.startsWith('/')) key = GROUP_TITLES[path.split('/')[1]] || path.split('/')[1];
     else key = 'WiFi access point';
     if (!groups.has(key)) groups.set(key, []);
@@ -810,6 +1038,7 @@ function toast(text, err = false) {
 function renderAll() {
   bound.clear();
   renderCards();
+  renderOutputCards();
   renderCalibrate();
   renderSettings();
   renderTimeline();
@@ -853,8 +1082,14 @@ function animate() {
   const tMs = sceneTimeMs();
   if (!$('#tab-servos').hidden) {
     const period = effectivePeriod();
-    for (const card of document.querySelectorAll('.card')) {
+    for (const card of document.querySelectorAll('.card[data-servo]')) {
       drawPlot(card._refs.canvas, Number(card.dataset.servo), tMs, period);
+    }
+  }
+  if (!$('#tab-outputs').hidden) {
+    const period = effectivePeriod();
+    for (const card of document.querySelectorAll('.card[data-output]')) {
+      drawStrip(card._refs.canvas, Number(card.dataset.output), tMs, period);
     }
   }
   if (!$('#tab-timeline').hidden) updateTimelineCursor(tMs);
@@ -880,6 +1115,7 @@ function init() {
     if (await saveConfig()) { await send('$Bye'); toast('Restarting…'); $('#restart').hidden = true; }
   });
   $('#btnAdd').addEventListener('click', addServo);
+  $('#btnAddOut').addEventListener('click', addOutput);
 
   $('#calServo').addEventListener('change', (e) => { calServo = Number(e.target.value); renderCalibrate(); });
   $('#calDeg').addEventListener('input', (e) => {

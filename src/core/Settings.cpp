@@ -6,6 +6,8 @@
 #include <cstring>
 #include <iterator>
 
+#include "core/Sequence.h"
+
 namespace ss {
 
 // ---------------------------------------------------------------------------
@@ -14,6 +16,12 @@ namespace ss {
 static const char* const kProfileNames[] = {"const", "trap", "tri", "sine", "bell"};
 static const char* const kModeNames[] = {"once", "return", "pingpong"};
 static const char* const kDriverNames[] = {"auto", "ledc", "mcpwm"};
+static const char* const kPcfTypeNames[] = {"pcf8574", "pcf8575"};
+
+static bool validateSequence(const char* v, std::string& msg) {
+    Sequence seq;
+    return parseSequence(v, seq, msg);
+}
 
 static bool validatePassword(const char* v, std::string& msg) {
     size_t n = std::strlen(v);
@@ -45,7 +53,7 @@ static bool validateIp(const char* v, std::string& msg) {
 
 static const FieldDesc kServoFields[] = {
     FLD(ServoConfig, name, "name", Str, 0, 0, 0),
-    FLD(ServoConfig, pin, "pin", Pin, 0, 0, kReboot),
+    FLD(ServoConfig, pin, "pin", Pin, 0, 0, kReboot | kNoPcf),
     ENM(ServoConfig, driver, "driver", kDriverNames, kReboot),
     FLD(ServoConfig, enable, "enable", Bool, 0, 0, 0),
     FLD(ServoConfig, startDeg, "start_deg", F32, 0, 360, kMotion),
@@ -106,17 +114,33 @@ static const FieldDesc kNetFields[] = {
     FLD(NetConfig, captive, "AP/Captive", Bool, 0, 0, kReboot),
 };
 
-#define GRP(name, count, member, S, fields) \
-    {name, count, offsetof(Config, member), sizeof(S), fields, static_cast<int>(std::size(fields))}
+static const FieldDesc kOutputFields[] = {
+    FLD(OutputConfig, name, "name", Str, 0, 0, 0),
+    FLD(OutputConfig, pin, "pin", Pin, 0, 0, kReboot | kNoPca),
+    FLD(OutputConfig, enable, "enable", Bool, 0, 0, 0),
+    FLD(OutputConfig, invert, "invert", Bool, 0, 0, 0),
+    VAL(OutputConfig, seq, "seq", Str, 0, validateSequence),
+};
+
+static const FieldDesc kPcfFields[] = {
+    FLD(PcfConfig, enable, "enable", Bool, 0, 0, kReboot),
+    ENM(PcfConfig, type, "type", kPcfTypeNames, kReboot),
+    FLD(PcfConfig, addr, "addr", Hex, 0x20, 0x3F, kReboot),
+};
+
+#define GRP(name, count, member, S, fields, pinField) \
+    {name, count, offsetof(Config, member), sizeof(S), fields, static_cast<int>(std::size(fields)), pinField}
 
 static const GroupDesc kGroups[] = {
-    GRP("servo", kMaxServos, servo, ServoConfig, kServoFields),
-    GRP("scene", 0, scene, SceneConfig, kSceneFields),
-    GRP("pwm", 0, pwm, PwmConfig, kPwmFields),
-    GRP("i2c", 0, i2c, I2cConfig, kI2cFields),
-    GRP("pca", kMaxPca, pca, PcaConfig, kPcaFields),
-    GRP("button", 0, button, ButtonConfig, kButtonFields),
-    GRP(nullptr, 0, net, NetConfig, kNetFields),  // named settings ($AP/SSID, ...)
+    GRP("servo", kMaxServos, servo, ServoConfig, kServoFields, 1),
+    GRP("out", kMaxOutputs, out, OutputConfig, kOutputFields, 1),
+    GRP("scene", 0, scene, SceneConfig, kSceneFields, -1),
+    GRP("pwm", 0, pwm, PwmConfig, kPwmFields, -1),
+    GRP("i2c", 0, i2c, I2cConfig, kI2cFields, -1),
+    GRP("pca", kMaxPca, pca, PcaConfig, kPcaFields, -1),
+    GRP("pcf", kMaxPcf, pcf, PcfConfig, kPcfFields, -1),
+    GRP("button", 0, button, ButtonConfig, kButtonFields, -1),
+    GRP(nullptr, 0, net, NetConfig, kNetFields, -1),  // named settings ($AP/SSID, ...)
 };
 
 // ---------------------------------------------------------------------------
@@ -179,6 +203,10 @@ bool Settings::parsePin(const std::string& s, PinSpec& pin) {
         pin = pinGpio(static_cast<uint8_t>(a));
         return true;
     }
+    if (std::sscanf(l.c_str(), "pcf.%u.%u%c", &a, &b, &tail) == 2 && a < kMaxPcf && b < 16) {
+        pin = pinPcf(static_cast<uint8_t>(a), static_cast<uint8_t>(b));
+        return true;
+    }
     if (std::sscanf(l.c_str(), "pca.%u.%u%c", &a, &b, &tail) == 2 && a < kMaxPca && b < kPcaChannels) {
         pin = pinPca(static_cast<uint8_t>(a), static_cast<uint8_t>(b));
         return true;
@@ -195,6 +223,9 @@ std::string Settings::formatPin(const PinSpec& pin) {
         case PinType::Pca:
             std::snprintf(buf, sizeof(buf), "pca.%u.%u", pin.board, pin.num);
             return buf;
+        case PinType::Pcf:
+            std::snprintf(buf, sizeof(buf), "pcf.%u.%u", pin.board, pin.num);
+            return buf;
         default:
             return "none";
     }
@@ -202,6 +233,12 @@ std::string Settings::formatPin(const PinSpec& pin) {
 
 // ---------------------------------------------------------------------------
 // Settings
+
+bool Settings::unwired(const GroupDesc& g, int index) const {
+    if (g.pinField < 0) return false;
+    SettingRef ref{&g, index, &g.fields[g.pinField], nullptr};
+    return reinterpret_cast<const PinSpec*>(ptr(ref, static_cast<const Config&>(cfg_)))->type == PinType::None;
+}
 
 uint8_t* Settings::ptr(const SettingRef& ref, Config& cfg) const {
     return reinterpret_cast<uint8_t*>(&cfg) + ref.group->base + ref.index * ref.group->stride + ref.field->offset;
@@ -360,7 +397,13 @@ Err Settings::set(const SettingRef& ref, const std::string& value, std::string& 
         case FieldType::Pin: {
             PinSpec pin;
             if (!parsePin(value, pin)) return msg = "expected none, gpio.N or pca.B.C", Err::BadValue;
-            if ((f.flags & kGpioOnly) && pin.type == PinType::Pca) return msg = "only gpio.N or none", Err::BadValue;
+            if ((f.flags & kGpioOnly) && pin.type != PinType::Gpio && pin.type != PinType::None) {
+                return msg = "only gpio.N or none", Err::BadValue;
+            }
+            if ((f.flags & kNoPca) && pin.type == PinType::Pca) {
+                return msg = "digital outputs use gpio.N or pcf.B.C", Err::BadValue;
+            }
+            if ((f.flags & kNoPcf) && pin.type == PinType::Pcf) return msg = "servos use gpio.N or pca.B.C", Err::BadValue;
             *reinterpret_cast<PinSpec*>(p) = pin;
             break;
         }
@@ -416,11 +459,8 @@ void Settings::forEach(const std::string& prefix, const std::function<void(const
                 ref.named = g.name ? nullptr : g.fields[f].name;
                 std::string p = path(ref);
                 if (!underPrefix(p, prefix)) continue;
-                // Unwired servo slots only show up when asked for explicitly.
-                if (&g == &kGroups[0] && cfg_.servo[i].pin.type == PinType::None &&
-                    prefix.size() <= std::string("/servo").size()) {
-                    continue;
-                }
+                // Unwired servo/output slots only show up when asked for explicitly.
+                if (unwired(g, i) && prefix.size() <= std::string(g.name).size() + 1) continue;
                 fn(ref);
             }
         }
@@ -442,7 +482,7 @@ std::string Settings::dumpYaml() const {
         out += std::string(g.name) + ":\n";
         int count = g.count > 0 ? g.count : 1;
         for (int i = 0; i < count; ++i) {
-            if (&g == &kGroups[0] && cfg_.servo[i].pin.type == PinType::None) continue;
+            if (unwired(g, i)) continue;
             std::string indent = "  ";
             if (g.count > 0) {
                 out += "  " + std::to_string(i) + ":\n";

@@ -32,6 +32,7 @@
 
 <nav class="tabs" role="tablist">
   <button role="tab" data-tab="servos" aria-selected="true">Servos</button>
+  <button role="tab" data-tab="outputs">Outputs</button>
   <button role="tab" data-tab="timeline">Timeline</button>
   <button role="tab" data-tab="calibrate">Calibrate</button>
   <button role="tab" data-tab="settings">Settings</button>
@@ -44,8 +45,14 @@
     <button id="btnAdd" class="add">+ Add servo</button>
   </section>
 
+  <section id="tab-outputs" class="tab" hidden>
+    <p class="hint">Digital outputs switch at the points of their sequence, every scene cycle. Times are in ms from the start of the cycle; before the first point an output keeps the state of the last one.</p>
+    <div id="outCards" class="cards"></div>
+    <button id="btnAddOut" class="add">+ Add output</button>
+  </section>
+
   <section id="tab-timeline" class="tab" hidden>
-    <p class="hint">One scene cycle. Bars show each servo's delay, move, dwell and return; the line is the current scene time.</p>
+    <p class="hint">One scene cycle. Bars show each servo's delay, move, dwell and return, and when each output is on; the line is the current scene time.</p>
     <div id="timeline" class="timeline"></div>
   </section>
 

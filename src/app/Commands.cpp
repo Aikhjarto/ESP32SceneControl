@@ -189,11 +189,25 @@ public:
                      static_cast<unsigned long>(cfg.pca[b].addr), o.pcaFound(b) ? "found" : "NOT found");
             out.line(buf);
         }
+        for (int b = 0; b < kMaxPcf; ++b) {
+            if (!cfg.pcf[b].enable) continue;
+            snprintf(buf, sizeof(buf), "[MSG:INFO: %s board %d at 0x%02lX %s]",
+                     cfg.pcf[b].type == PcfType::Pcf8575 ? "PCF8575" : "PCF8574", b,
+                     static_cast<unsigned long>(cfg.pcf[b].addr), o.pcfFound(b) ? "found" : "NOT found");
+            out.line(buf);
+        }
         for (int i = 0; i < kMaxServos; ++i) {
             const ServoConfig& s = cfg.servo[i];
             if (s.pin.type == PinType::None) continue;
             snprintf(buf, sizeof(buf), "[SERVO:%d %s %s%s]", i, Settings::formatPin(s.pin).c_str(),
                      o.describe(i).c_str(), s.enable ? "" : " disabled");
+            out.line(buf);
+        }
+        for (int i = 0; i < kMaxOutputs; ++i) {
+            const OutputConfig& d = cfg.out[i];
+            if (d.pin.type == PinType::None) continue;
+            snprintf(buf, sizeof(buf), "[OUTPUT:%d %s %s%s]", i, Settings::formatPin(d.pin).c_str(),
+                     o.describeOutput(i).c_str(), d.enable ? "" : " disabled");
             out.line(buf);
         }
         const std::string& log = bootLog();

@@ -19,6 +19,8 @@ enum FieldFlag : uint8_t {
     kMotion = 2,    // changes the choreography: servo(s) rejoin smoothly
     kGpioOnly = 4,  // pin field that only accepts gpio.N or none
     kSecret = 8,    // masked in listings
+    kNoPca = 16,    // pin field of a digital output: gpio.N or pcf.B.C
+    kNoPcf = 32,    // pin field of a servo: gpio.N or pca.B.C
 };
 
 struct FieldDesc {
@@ -41,6 +43,7 @@ struct GroupDesc {
     size_t stride;
     const FieldDesc* fields;
     int fieldCount;
+    int pinField;  // index of the pin field: slots with pin none are hidden in listings; -1 = none
 };
 
 struct SettingRef {
@@ -88,6 +91,7 @@ public:
     static std::string formatPin(const PinSpec& pin);
 
 private:
+    bool unwired(const GroupDesc& g, int index) const;
     uint8_t* ptr(const SettingRef& ref, Config& cfg) const;
     const uint8_t* ptr(const SettingRef& ref, const Config& cfg) const;
 

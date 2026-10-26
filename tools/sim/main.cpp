@@ -54,6 +54,11 @@ struct SimHost : Host {
             out.line("[SERVO:" + std::to_string(i) + " " + Settings::formatPin(cfg.servo[i].pin) + " sim." +
                      std::to_string(i) + (cfg.servo[i].enable ? "" : " disabled") + "]");
         }
+        for (int i = 0; i < kMaxOutputs; ++i) {
+            if (cfg.out[i].pin.type == PinType::None) continue;
+            out.line("[OUTPUT:" + std::to_string(i) + " " + Settings::formatPin(cfg.out[i].pin) + " sim.out" +
+                     std::to_string(i) + (cfg.out[i].enable ? "" : " disabled") + "]");
+        }
     }
     Err command(const std::string& name, const std::string&, bool, ReplySink&, std::string& msg) override {
         if (name != "Firmware/Update") return Err::UnknownCommand;
@@ -99,6 +104,7 @@ int main(int argc, char** argv) {
         } else if (req == "S") {
             out.line(scene.status());
             out.line(scene.positions());
+            out.line(scene.outputs());
         } else if (req == "D") {
             std::cout << parser.settings().dumpChanged();
         } else if (req.rfind("P ", 0) == 0) {

@@ -5,6 +5,7 @@
 #include <cstdarg>
 #include <cstdio>
 
+#include "core/Settings.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_log.h"
@@ -53,10 +54,24 @@ bool Outputs::gpioUsableForServo(int gpio) {
     return true;
 }
 
+bool Outputs::i2cUsed(const Config& cfg) {
+    for (const PcaConfig& p : cfg.pca) {
+        if (p.enable) return true;
+    }
+    for (const PcfConfig& p : cfg.pcf) {
+        if (p.enable) return true;
+    }
+    return false;
+}
+
 void Outputs::begin(const Config& cfg, std::string& log) {
-    initPca(cfg, log);
+    initI2c(cfg, log);
     for (int i = 0; i < kMaxServos; ++i) {
         if (cfg.servo[i].pin.type != PinType::None) allocate(cfg, i, log);
+    }
+    for (int o = 0; o < kMaxOutputs; ++o) {
+        level_[o] = -1;
+        if (cfg.out[o].pin.type != PinType::None) allocateOutput(cfg, o, log);
     }
     initLedc(cfg);
     initMcpwm(cfg, 0, log);
@@ -71,6 +86,7 @@ void Outputs::begin(const Config& cfg, std::string& log) {
                    describe(i).c_str(), maxPulseUs(map_[i]));
         }
     }
+    flush();  // initial "off" levels of PCF outputs
     ESP_LOGI(TAG, "allocated: LEDC-HS %d/%d, LEDC-LS %d/%d, MCPWM0 %d/%d, MCPWM1 %d/%d", used_[0], kLedcPerMode,
              used_[1], kLedcPerMode, used_[2], kMcpwmPerUnit, used_[3], kMcpwmPerUnit);
 }
@@ -88,7 +104,7 @@ bool Outputs::allocate(const Config& cfg, int servo, std::string& log) {
                    pin.board, pin.num, pin.board, pin.board);
             return false;
         }
-        if (!pca_[pin.board].ok()) return false;  // missing board already reported by initPca
+        if (!pca_[pin.board].ok()) return false;  // missing board already reported by initI2c
         for (int j = 0; j < servo; ++j) {
             if (pin_[j] == pin) {
                 addLog(log, "servo %d: pca.%u.%u already used by servo %d", servo, pin.board, pin.num, j);
@@ -105,9 +121,7 @@ bool Outputs::allocate(const Config& cfg, int servo, std::string& log) {
         addLog(log, "servo %d: gpio.%d cannot be used as servo output", servo, gpio);
         return false;
     }
-    bool i2cUsed = false;
-    for (const PcaConfig& p : cfg.pca) i2cUsed |= p.enable;
-    if ((i2cUsed && (pin == cfg.i2c.sda || pin == cfg.i2c.scl)) || pin == cfg.button.pin) {
+    if ((i2cUsed(cfg) && (pin == cfg.i2c.sda || pin == cfg.i2c.scl)) || pin == cfg.button.pin) {
         addLog(log, "servo %d: gpio.%d is used by I2C or the button", servo, gpio);
         return false;
     }
@@ -221,13 +235,89 @@ void Outputs::initMcpwm(const Config& cfg, int unit, std::string& log) {
     (void)log;
 }
 
-void Outputs::initPca(const Config& cfg, std::string& log) {
-    bool any = false;
-    for (const PcaConfig& p : cfg.pca) any |= p.enable;
-    if (!any) return;
+bool Outputs::allocateOutput(const Config& cfg, int out, std::string& log) {
+    const PinSpec pin = cfg.out[out].pin;
+    for (int j = 0; j < out; ++j) {
+        if (cfg.out[j].pin == pin && dmap_[j].kind != DigitalChannel::Kind::None) {
+            addLog(log, "output %d: %s already used by output %d", out, Settings::formatPin(pin).c_str(), j);
+            return false;
+        }
+    }
+    if (pin.type == PinType::Pcf) {
+        if (!cfg.pcf[pin.board].enable) {
+            addLog(log, "output %d: pcf.%u.%u is on PCF board %u, which is disabled ($/pcf/%u/enable)", out,
+                   pin.board, pin.num, pin.board, pin.board);
+            return false;
+        }
+        if (!pcf_[pin.board].ok()) return false;  // missing board already reported by initI2c
+        if (pin.num >= pcf_[pin.board].bits()) {
+            addLog(log, "output %d: PCF board %u has only %d bits", out, pin.board, pcf_[pin.board].bits());
+            return false;
+        }
+        dmap_[out] = {DigitalChannel::Kind::Pcf, pin.board, pin.num};
+        setDigital(out, cfg.out[out].invert);  // "off" until the scene says otherwise
+        return true;
+    }
+    if (pin.type != PinType::Gpio) return false;
+
+    const int gpio = pin.num;
+    if (!gpioUsableForServo(gpio)) {
+        addLog(log, "output %d: gpio.%d cannot be used as an output", out, gpio);
+        return false;
+    }
+    if ((i2cUsed(cfg) && (pin == cfg.i2c.sda || pin == cfg.i2c.scl)) || pin == cfg.button.pin) {
+        addLog(log, "output %d: gpio.%d is used by I2C or the button", out, gpio);
+        return false;
+    }
+    for (int i = 0; i < kMaxServos; ++i) {
+        if (pin_[i] == pin) {
+            addLog(log, "output %d: gpio.%d already used by servo %d", out, gpio, i);
+            return false;
+        }
+    }
+    gpio_config_t io = {};
+    io.pin_bit_mask = 1ULL << gpio;
+    io.mode = GPIO_MODE_OUTPUT;
+    if (gpio_config(&io) != ESP_OK) {
+        addLog(log, "output %d: gpio.%d configuration failed", out, gpio);
+        return false;
+    }
+    dmap_[out] = {DigitalChannel::Kind::Gpio, 0, static_cast<uint8_t>(gpio)};
+    setDigital(out, cfg.out[out].invert);  // "off" until the scene says otherwise
+    return true;
+}
+
+void Outputs::setDigital(int out, bool high) {
+    const DigitalChannel& d = dmap_[out];
+    if (d.kind == DigitalChannel::Kind::None || level_[out] == static_cast<int8_t>(high)) return;
+    level_[out] = static_cast<int8_t>(high);
+    if (d.kind == DigitalChannel::Kind::Gpio) {
+        gpio_set_level(static_cast<gpio_num_t>(d.num), high);
+    } else {
+        pcf_[d.unit].set(d.num, high);
+    }
+}
+
+std::string Outputs::describeOutput(int out) const {
+    const DigitalChannel& d = dmap_[out];
+    char buf[16];
+    switch (d.kind) {
+        case DigitalChannel::Kind::Gpio:
+            snprintf(buf, sizeof(buf), "gpio.%u", d.num);
+            return buf;
+        case DigitalChannel::Kind::Pcf:
+            snprintf(buf, sizeof(buf), "pcf%u.%u", d.unit, d.num);
+            return buf;
+        default:
+            return "none";
+    }
+}
+
+void Outputs::initI2c(const Config& cfg, std::string& log) {
+    if (!i2cUsed(cfg)) return;
 
     if (cfg.i2c.sda.type != PinType::Gpio || cfg.i2c.scl.type != PinType::Gpio) {
-        addLog(log, "I2C pins not set, PCA9685 disabled");
+        addLog(log, "I2C pins not set, PCA9685/PCF boards disabled");
         return;
     }
     i2c_master_bus_config_t bc = {};
@@ -248,6 +338,13 @@ void Outputs::initPca(const Config& cfg, std::string& log) {
         if (!p.enable) continue;
         if (!pca_[b].begin(i2c_, static_cast<uint8_t>(p.addr), sclHz, p.freqHz, p.oscHz)) {
             addLog(log, "PCA9685 board %d not found at 0x%02lX", b, static_cast<unsigned long>(p.addr));
+        }
+    }
+    for (int b = 0; b < kMaxPcf; ++b) {
+        const PcfConfig& p = cfg.pcf[b];
+        if (!p.enable) continue;
+        if (!pcf_[b].begin(i2c_, static_cast<uint8_t>(p.addr), sclHz, p.type == PcfType::Pcf8575)) {
+            addLog(log, "PCF board %d not found at 0x%02lX", b, static_cast<unsigned long>(p.addr));
         }
     }
 }
@@ -329,6 +426,7 @@ void Outputs::off(int servo) {
 
 void Outputs::flush() {
     for (Pca9685& p : pca_) p.flush();
+    for (Pcf857x& p : pcf_) p.flush();
 }
 
 std::string Outputs::describe(int servo) const {

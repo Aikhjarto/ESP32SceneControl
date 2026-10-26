@@ -9,11 +9,19 @@
 #include "driver/mcpwm_prelude.h"
 #include "hal/mcpwm_ll.h"  // MCPWM_LL_GET(...): per-chip MCPWM unit counts (ESP-IDF 6)
 #include "out/Pca9685.h"
+#include "out/Pcf857x.h"
 #include "soc/soc_caps.h"
 
 namespace ss {
 
 enum class HwKind : uint8_t { None, LedcHs, LedcLs, Mcpwm0, Mcpwm1, Pca };
+
+// Where a digital output goes.
+struct DigitalChannel {
+    enum class Kind : uint8_t { None, Gpio, Pcf } kind = Kind::None;
+    uint8_t unit = 0;  // PCF board
+    uint8_t num = 0;   // GPIO number or PCF bit
+};
 
 struct HwChannel {
     HwKind kind = HwKind::None;
@@ -23,14 +31,20 @@ struct HwChannel {
 
 class Outputs {
 public:
-    // Allocates and initializes the hardware for every servo with a pin.
+    // Allocates and initializes the hardware for every servo and digital output with a pin.
     // Problems (bad pins, missing PCA boards, exhausted blocks) are appended to `log`, one per line.
     void begin(const Config& cfg, std::string& log);
 
     // Called from the motion task only.
     void setPulseUs(int servo, float us);
     void off(int servo);
-    void flush();  // pushes buffered PCA9685 values over I2C
+    void flush();  // pushes buffered PCA9685 / PCF857x values over I2C
+
+    // Digital outputs (called from the motion task only).
+    const DigitalChannel& digital(int out) const { return dmap_[out]; }
+    void setDigital(int out, bool high);  // written only when the level changes
+    std::string describeOutput(int out) const;  // e.g. "gpio.12", "pcf0.5"
+    bool pcfFound(int board) const { return pcf_[board].ok(); }
 
     const HwChannel& channel(int servo) const { return map_[servo]; }
     bool pcaFound(int board) const { return pca_[board].ok(); }
@@ -56,7 +70,9 @@ private:
     float maxPulseUs(const HwChannel& hw) const;
     void initLedc(const Config& cfg);
     void initMcpwm(const Config& cfg, int unit, std::string& log);
-    void initPca(const Config& cfg, std::string& log);
+    void initI2c(const Config& cfg, std::string& log);
+    bool allocateOutput(const Config& cfg, int out, std::string& log);
+    static bool i2cUsed(const Config& cfg);
 
     HwChannel map_[kMaxServos];
     PinSpec pin_[kMaxServos] = {};
@@ -66,6 +82,9 @@ private:
     McpwmUnit mcpwm_[2];
     i2c_master_bus_handle_t i2c_ = nullptr;
     Pca9685 pca_[kMaxPca];
+    Pcf857x pcf_[kMaxPcf];
+    DigitalChannel dmap_[kMaxOutputs];
+    int8_t level_[kMaxOutputs];  // last written level, -1 = not yet written
 };
 
 }  // namespace ss

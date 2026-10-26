@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "core/Motion.h"
+#include "core/Sequence.h"
 
 namespace ss {
 
@@ -156,7 +157,7 @@ Err Parser::setting(const std::string& path, const std::string& value, bool hasV
 }
 
 void Parser::afterChange(const SettingRef& ref, ReplySink& out) {
-    const bool servoField = ref.group->name && ref.group->count == kMaxServos;
+    const bool servoField = ref.group->base == offsetof(Config, servo);
     // The edited servo blends onto its new trajectory. A changed scene period is noticed by
     // the scene itself, which switches return-mode servos over smoothly.
     if ((ref.field->flags & kMotion) && servoField) scene_.rejoin(ref.index);
@@ -164,9 +165,11 @@ void Parser::afterChange(const SettingRef& ref, ReplySink& out) {
 
     if (ref.field->flags & kReboot) out.line("[MSG:INFO: Restart required to apply $" + settings_.path(ref) + "]");
     if (!servoField) {
-        if (ref.field->offset == offsetof(SceneConfig, periodMs) && ref.group->base == offsetof(Config, scene)) {
+        if (ref.group->base == offsetof(Config, scene) && ref.field->offset == offsetof(SceneConfig, periodMs)) {
             warnShortPeriod(out);
+            warnUnreachedSwitchPoints(out);
         }
+        if (ref.group->base == offsetof(Config, out)) warnUnreachedSwitchPoints(out);
         return;
     }
 
@@ -195,6 +198,24 @@ void Parser::warnShortPeriod(ReplySink& out) {
         }
     }
     if (!list.empty()) out.line("[MSG:WARN: scene period is shorter than the cycle of servos " + list + "]");
+}
+
+// Switch points at or after the end of the scene cycle are never reached.
+void Parser::warnUnreachedSwitchPoints(ReplySink& out) {
+    const uint32_t period = effectivePeriodMs(cfg_);
+    std::string list;
+    for (int o = 0; o < kMaxOutputs; ++o) {
+        if (!outputActive(cfg_.out[o])) continue;
+        Sequence seq;
+        std::string err;
+        if (parseSequence(cfg_.out[o].seq, seq, err) && seq.count > 0 && seq.timeMs[seq.count - 1] >= period) {
+            list += (list.empty() ? "" : ",") + std::to_string(o);
+        }
+    }
+    if (!list.empty()) {
+        out.line("[MSG:WARN: outputs " + list + " have switch points after the end of the " + std::to_string(period) +
+                 " ms scene cycle; those are never reached]");
+    }
 }
 
 bool Parser::restore(const std::string& text, ReplySink& out) {
@@ -250,6 +271,7 @@ bool Parser::restore(const std::string& text, ReplySink& out) {
     out.line("[MSG:INFO: Config restored (" + std::to_string(applied) + " settings)]");
     if (needsRestart) out.line("[MSG:INFO: Restart required to apply the restored config]");
     warnShortPeriod(out);
+    warnUnreachedSwitchPoints(out);
     return true;
 }
 
@@ -340,6 +362,11 @@ Err Parser::command(const std::string& name, const std::string& value, bool hasV
         out.line(scene_.positions());
         return Err::Ok;
     }
+    if (is("Outputs", "Output/States")) {
+        Guard g(host_);
+        out.line(scene_.outputs());
+        return Err::Ok;
+    }
     if (is("Scene/Stop")) return host_.setRunning(false, "command"), Err::Ok;
     if (is("Scene/Go")) return host_.setRunning(true, "command"), Err::Ok;
     if (is("Scene/Reset")) {
@@ -383,7 +410,57 @@ Err Parser::command(const std::string& name, const std::string& value, bool hasV
         scene_.release(servo);
         return Err::Ok;
     }
+    if (is("Output/Stop", "Output/Go")) {
+        Guard g(host_);
+        int o;
+        Err e = outputArg(value, o, true, msg);
+        if (e != Err::Ok) return e;
+        scene_.setOutputRun(o, is("Output/Go"));
+        return Err::Ok;
+    }
+    if (is("Output/Set")) {
+        Guard g(host_);
+        size_t comma = value.find(',');
+        int o;
+        Err e = outputArg(trim(value.substr(0, comma)), o, false, msg);
+        if (e != Err::Ok) return e;
+        std::string state = comma == std::string::npos ? "" : trim(value.substr(comma + 1));
+        Sequence probe;  // reuse the sequence parser for "on"/"off"
+        if (state.empty() || !parseSequence(("0:" + state).c_str(), probe, msg) || probe.count != 1) {
+            msg = "use $Output/Set=<output>,on|off";
+            return Err::BadValue;
+        }
+        scene_.outputTest(o, probe.on[0]);
+        return Err::Ok;
+    }
+    if (is("Output/Release")) {
+        Guard g(host_);
+        int o;
+        Err e = outputArg(value, o, true, msg);
+        if (e != Err::Ok) return e;
+        scene_.outputRelease(o);
+        return Err::Ok;
+    }
     return host_.command(name, value, hasValue, out, msg);
+}
+
+Err Parser::outputArg(const std::string& value, int& o, bool allowAll, std::string& msg) const {
+    if (allowAll && value == "*") {
+        o = -1;
+        return Err::Ok;
+    }
+    char* end = nullptr;
+    long n = std::strtol(value.c_str(), &end, 10);
+    if (value.empty() || *end) {
+        msg = allowAll ? "expected an output number or *" : "expected an output number";
+        return Err::BadValue;
+    }
+    if (n < 0 || n >= kMaxOutputs || !outputActive(cfg_.out[n])) {
+        msg = "output " + value + " is not enabled";
+        return Err::NoSuchServo;
+    }
+    o = static_cast<int>(n);
+    return Err::Ok;
 }
 
 void Parser::listSettings(const std::string& prefix, ReplySink& out) {
@@ -395,10 +472,11 @@ void Parser::listSettings(const std::string& prefix, ReplySink& out) {
 
 void Parser::help(ReplySink& out) {
     static const char* const kLines[] = {
-        "[HLP:$$ $S $I $CD $CS $RST=* $Bye $Status $Positions]",
+        "[HLP:$$ $S $I $CD $CS $RST=* $Bye $Status $Positions $Outputs]",
         "[HLP:$Scene/Stop $Scene/Go $Scene/Reset   realtime: ! ~ ? Ctrl-X]",
         "[HLP:$Servo/Stop=n|* $Servo/Go=n|* $Servo/Test=n,deg $Servo/Release=n|*]",
-        "[HLP:$/servo/n/<field>[=value]  $/scene/... $/pwm/... $/i2c/... $/pca/n/... $/button/...]",
+        "[HLP:$Output/Stop=n|* $Output/Go=n|* $Output/Set=n,on|off $Output/Release=n|*]",
+        "[HLP:$/servo/n/<field>[=value]  $/out/n/... $/scene/... $/pwm/... $/i2c/... $/pca/n/... $/pcf/n/... $/button/...]",
         "[HLP:$AP/SSID $AP/Password $AP/Channel $AP/IP $AP/Captive $Hostname]",
         "[HLP:$Firmware/Update[=url]  (default http://<first client>:9999/firmware.bin)]",
     };

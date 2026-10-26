@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "core/Motion.h"
+#include "core/Sequence.h"
 
 namespace ss {
 
@@ -59,6 +60,21 @@ void Scene::tick(int64_t dtUs) {
             st.out = tgt;
         }
         st.vel = dtUs > 0 ? (st.out - prev) * 1e6f / dtUs : 0;
+    }
+
+    const uint32_t inCycleMs = static_cast<uint32_t>(periodMs_ ? (tUs_ / 1000) % periodMs_ : tUs_ / 1000);
+    for (int o = 0; o < kMaxOutputs; ++o) {
+        OutputState& os = ost_[o];
+        os.active = outLive(o);
+        if (!os.active) continue;
+        if (os.testing) {
+            os.on = os.testOn;
+        } else if (!os.stopped) {
+            Sequence seq;  // parsed each tick (only wired outputs): never stale after an edit
+            std::string err;
+            parseSequence(cfg_.out[o].seq, seq, err);
+            os.on = sequenceState(seq, inCycleMs);
+        }
     }
     outTimeUs_ = tUs_;
     outDtUs_ = sceneDtUs;
@@ -139,6 +155,39 @@ void Scene::rejoin(int servo) {
     startRejoin(servo);
 }
 
+void Scene::setOutputRun(int out, bool run) {
+    if (out < 0) {
+        for (int o = 0; o < kMaxOutputs; ++o) setOutputRun(o, run);
+        return;
+    }
+    ost_[out].stopped = !run;  // on Go it takes the scene's state at the next tick
+}
+
+void Scene::outputTest(int out, bool on) {
+    ost_[out].testing = true;
+    ost_[out].testOn = on;
+}
+
+void Scene::outputRelease(int out) {
+    if (out < 0) {
+        for (int o = 0; o < kMaxOutputs; ++o) outputRelease(o);
+        return;
+    }
+    ost_[out].testing = false;
+}
+
+std::string Scene::outputs() const {
+    std::string out = "[OUT:";
+    bool first = true;
+    for (int o = 0; o < kMaxOutputs; ++o) {
+        if (!ost_[o].active) continue;
+        out += (first ? "" : ",") + std::to_string(o) + (ost_[o].on ? "=1" : "=0");
+        first = false;
+    }
+    out += ']';
+    return out;
+}
+
 static void appendList(std::string& out, const char* label, const std::string& list) {
     if (list.empty()) return;
     out += '|';
@@ -148,7 +197,7 @@ static void appendList(std::string& out, const char* label, const std::string& l
 }
 
 std::string Scene::status() const {
-    std::string stopped, rejoin, test;
+    std::string stopped, rejoin, test, outStopped, outTest;
     auto add = [](std::string& l, int i) {
         if (!l.empty()) l += ',';
         l += std::to_string(i);
@@ -159,6 +208,11 @@ std::string Scene::status() const {
         if (st_[i].rejoining) add(rejoin, i);
         if (st_[i].testing) add(test, i);
     }
+    for (int o = 0; o < kMaxOutputs; ++o) {
+        if (!outLive(o)) continue;
+        if (ost_[o].stopped) add(outStopped, o);
+        if (ost_[o].testing) add(outTest, o);
+    }
     char head[64];
     snprintf(head, sizeof(head), "<%s|T:%.3f|Cyc:%lu", running_ ? "Run" : "Hold", tUs_ / 1e6,
              static_cast<unsigned long>(cycle()));
@@ -166,6 +220,8 @@ std::string Scene::status() const {
     appendList(out, "Stop", stopped);
     appendList(out, "Rejoin", rejoin);
     appendList(out, "Test", test);
+    appendList(out, "OStop", outStopped);
+    appendList(out, "OTest", outTest);
     out += '>';
     return out;
 }

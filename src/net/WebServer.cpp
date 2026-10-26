@@ -239,7 +239,7 @@ static void statusTask(void*) {
         std::string text;
         {
             app::Locked l;
-            text = app::scene().status() + "\n" + app::scene().positions() + "\n";
+            text = app::scene().status() + "\n" + app::scene().positions() + "\n" + app::scene().outputs() + "\n";
         }
         wsBroadcastAll(text, true);
     }

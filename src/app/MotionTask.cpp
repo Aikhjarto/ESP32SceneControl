@@ -21,6 +21,7 @@ static int64_t gEnableAtUs[kMaxServos];  // staggered power-up
 static bool gOn[kMaxServos];
 static float gPulse[kMaxServos];
 static bool gWant[kMaxServos];
+static int8_t gOutLevel[kMaxOutputs];  // level to drive: 1 high, 0 low
 
 // Button state
 static bool gButtonUsed;
@@ -103,6 +104,11 @@ static void motionTask(void*) {
                 gWant[i] = sc.hasOutput(i) && now >= gEnableAtUs[i];
                 if (gWant[i]) gPulse[i] = pulseUs(config().servo[i], sc.output(i));
             }
+            for (int o = 0; o < kMaxOutputs; ++o) {
+                // Inactive (disabled) outputs go to their "off" level.
+                const bool on = sc.hasOutputState(o) && sc.outputOn(o);
+                gOutLevel[o] = on != config().out[o].invert;
+            }
         }
 
         Outputs& out = outputs();
@@ -116,6 +122,7 @@ static void motionTask(void*) {
                 gOn[i] = false;
             }
         }
+        for (int o = 0; o < kMaxOutputs; ++o) out.setDigital(o, gOutLevel[o]);  // only changes are written
         out.flush();
     }
 }

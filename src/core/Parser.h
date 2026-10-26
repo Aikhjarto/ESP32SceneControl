@@ -67,8 +67,10 @@ private:
     Err command(const std::string& name, const std::string& value, bool hasValue, ReplySink& out, std::string& msg);
     Err setting(const std::string& path, const std::string& value, bool hasValue, ReplySink& out, std::string& msg);
     Err servoArg(const std::string& value, int& servo, bool allowAll, std::string& msg) const;
+    Err outputArg(const std::string& value, int& out, bool allowAll, std::string& msg) const;
     void afterChange(const SettingRef& ref, ReplySink& out);
     void warnShortPeriod(ReplySink& out);
+    void warnUnreachedSwitchPoints(ReplySink& out);
     void listSettings(const std::string& prefix, ReplySink& out);
     void help(ReplySink& out);
 
