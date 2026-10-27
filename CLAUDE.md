@@ -41,7 +41,8 @@ this file holds the decisions, rules and state a new session needs to continue t
   - Edits and period changes keep the current speed.
   - An edit that doesn't change where the servo is going starts no settle at all.
   - There is no hard range clamp: an earlier clamp stalled fast servos. The run-on time is
-    shortened instead, so the servo stays inside its start..stop range.
+    shortened instead (sized against the room the blend leaves free, kRoomFactor), so the
+    servo stays inside its start..stop range. One outside its new range doesn't run on.
 - **Timeline:** a looped cycle with a per-servo mode (once / return / pingpong), delay and
   dwell. The automatic period also covers the outputs' last switch point, rounded up to
   the next full second. Firmware (`effectivePeriodMs`) and `web/app.js` must agree.
@@ -49,10 +50,16 @@ this file holds the decisions, rules and state a new session needs to continue t
   - Hardware: free GPIOs or PCF8574/PCF8575 bits (`pcf.B.C`).
   - The invert setting is latched at boot for the pin it was booted with, so `$RST=*`
     can't turn active-low outputs on.
-  - A PCF board missing at boot is probed again every 5 s.
+  - A PCF board missing at boot is probed again every 5 s (timed, not counted in ticks).
+  - Before a software restart, the motion task switches every output off (shutdown handler).
+  - Points after the end of a fixed period are never reached and set no state, also not the
+    wrap state (`sequenceState` and `seqState` in app.js).
 - **Storage:** an NVS blob of only the non-default settings, as `$path=value` lines,
   replayed through the parser at boot. A restore is validated in a scratch Config first.
   - The worst case is about 49 KB, hence the 128 KB NVS partition and the 64 KB upload limit.
+- **Text settings** (names, SSID, ...) must be UTF-8 without control characters, and every
+  WebSocket text frame is made valid UTF-8, or the browser drops the connection.
+- **Calibration edits** on a powered servo glide the pulse at `max_dps` (`PulseGlide`).
 - **No mDNS:** the UI is at 192.168.4.1, with a captive-portal DNS.
 - **OTA:**
   - Only signed images are accepted: ECDSA P-256 in espsecure v1 format, checked in the
@@ -81,7 +88,7 @@ this file holds the decisions, rules and state a new session needs to continue t
   `.pio/build/esp32dev/firmware-signed.bin`.
 - `tools/sim/main.cpp` and `tools/sim_server.py`: a desktop simulator for the web UI.
   It needs aiohttp.
-- `test/test_motion`, `test/test_parser`, `test/test_outputs`: Unity tests, 64 in total.
+- `test/test_motion`, `test/test_parser`, `test/test_outputs`: Unity tests, 68 in total.
 - `docs/hardware-checklist.md`: the bring-up plan for real hardware.
 
 ## Build and test
@@ -90,7 +97,7 @@ this file holds the decisions, rules and state a new session needs to continue t
 
 ```sh
 pio run                     # firmware + firmware-signed.bin (needs the signing key)
-pio test -e native          # 64 host tests; run them before every commit
+pio test -e native          # 68 host tests; run them before every commit
 python3 tools/sim_server.py --port 8791 --config <scratch>/sim.txt   # UI against the simulator
 ```
 
@@ -122,8 +129,8 @@ ESP-IDF 6.1 pitfalls hit so far:
 
 ## Status (2026-10-27)
 
-- All milestones and five review rounds are done and committed (latest: 049fa04).
-  - Verified by the firmware build (55% flash, 28% RAM), 64 native tests and
+- All milestones and six review rounds are done and committed.
+  - Verified by the firmware build (55% flash, 30% RAM), 68 native tests and
     headless-browser runs against the simulator.
 - **Not yet tested on real hardware:** no ESP32 has been connected. The next step is to
   work through [docs/hardware-checklist.md](docs/hardware-checklist.md) in order.

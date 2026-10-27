@@ -7,6 +7,7 @@
 #include "core/Motion.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -20,6 +21,7 @@ static int64_t gTickUs = 20000;
 static int64_t gEnableAtUs[kMaxServos];  // staggered power-up
 static bool gOn[kMaxServos];
 static float gPulse[kMaxServos];
+static PulseGlide gGlide[kMaxServos];
 static bool gWant[kMaxServos];
 static int8_t gOutLevel[kMaxOutputs];  // level to drive: 1 high, 0 low
 
@@ -31,6 +33,29 @@ static bool gButtonStable;
 static int64_t gButtonChangeUs;
 
 static std::atomic<uint32_t> gRunGeneration;
+
+// Before a software restart every output goes "off": PCF boards keep their state across it,
+// also a board that is disabled in the config by then and so not written after the restart.
+static std::atomic<int> gShutdown;  // 1 requested, 2 done
+
+static void onShutdown() {
+    if (!gTask || xTaskGetCurrentTaskHandle() == gTask) return;
+    gShutdown = 1;
+    for (int i = 0; i < 25 && gShutdown != 2; ++i) {
+        xTaskNotifyGive(gTask);  // the restart may run in the esp_timer task that drives it
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+static void outputsOff() {
+    Outputs& out = outputs();
+    {
+        Locked l;
+        for (int o = 0; o < kMaxOutputs; ++o) gOutLevel[o] = out.levelFor(o, false, config().out[o]);
+    }
+    for (int o = 0; o < kMaxOutputs; ++o) out.setDigital(o, gOutLevel[o]);
+    out.flush();
+}
 
 uint32_t runGeneration() { return gRunGeneration; }
 
@@ -83,6 +108,10 @@ static void motionTask(void*) {
     int64_t last = esp_timer_get_time();
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (gShutdown) {  // restarting: outputs off once, then nothing is written any more
+            if (gShutdown == 1) outputsOff(), gShutdown = 2;
+            continue;
+        }
         const int64_t now = esp_timer_get_time();
         // After a stall (e.g. flash writes) the scene clock lags instead of leaping, so
         // servos never jump to catch up.
@@ -102,7 +131,8 @@ static void motionTask(void*) {
             sc.tick(dt);
             for (int i = 0; i < kMaxServos; ++i) {
                 gWant[i] = sc.hasOutput(i) && now >= gEnableAtUs[i];
-                if (gWant[i]) gPulse[i] = pulseUs(config().servo[i], sc.output(i));
+                if (gWant[i]) gPulse[i] = gGlide[i].pulse(config().servo[i], sc.output(i), dt);
+                else gGlide[i].reset();
             }
             for (int o = 0; o < kMaxOutputs; ++o) {
                 // Inactive (disabled) outputs go to their "off" level.
@@ -147,6 +177,7 @@ void startMotion() {
     }
 
     xTaskCreatePinnedToCore(motionTask, "motion", 4096, nullptr, configMAX_PRIORITIES - 3, &gTask, 1);
+    esp_register_shutdown_handler(onShutdown);
 
     esp_timer_create_args_t ta = {};
     ta.callback = onTimer;

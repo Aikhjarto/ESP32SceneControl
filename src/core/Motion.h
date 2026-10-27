@@ -52,4 +52,18 @@ float peakDps(const ServoConfig& s);
 // Angle (0..rangeDeg) → pulse width in µs, including inversion, trim and clamping.
 float pulseUs(const ServoConfig& s, float deg);
 
+// Pulse of a powered servo. A calibration edit (min_us, max_us, trim_us, range_deg, invert)
+// would move it in one step - invert by up to the whole travel - so the pulse glides from
+// the old calibration to the new one at the servo's max_dps instead (at once if 0).
+class PulseGlide {
+public:
+    float pulse(const ServoConfig& s, float deg, int64_t dtUs);
+    void reset() { valid_ = false; }  // servo off: the next pulse starts without a glide
+
+private:
+    bool valid_ = false;
+    float offsetUs_ = 0;  // old calibration's pulse minus the new one, decays to 0
+    ServoConfig cal_{};   // calibration the offset refers to
+};
+
 }  // namespace ss

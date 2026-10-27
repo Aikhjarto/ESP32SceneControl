@@ -98,4 +98,11 @@ private:
     Config& cfg_;
 };
 
+// Length of the valid UTF-8 sequence starting at s[i] (1-4), or 0 if it is not one
+// (malformed, overlong, a surrogate or above U+10FFFF).
+size_t utf8SequenceLength(const std::string& s, size_t i);
+// Replaces every byte that is not part of valid UTF-8 with '?' (WebSocket text frames must
+// be valid UTF-8, or the browser drops the connection).
+void makeValidUtf8(std::string& s);
+
 }  // namespace ss

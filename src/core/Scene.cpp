@@ -12,14 +12,15 @@ namespace ss {
 static constexpr int64_t kMaxRejoinUs = 10'000'000;
 // A settle that keeps the servo's speed v lets it run on (speedRunOn) for T1 seconds: peak
 // run-on 0.1975 * |v| * T1, peak acceleration 3.94 * |v| / T1. T1 is chosen for at most
-// kSettleAccel (deg/s^2), at least kMinSpeedDecayS, and shorter when needed so the run-on
-// stays inside the servo's start..stop range - never shorter than kShortestSpeedDecayS
-// (then it decelerates harder and may run on a few degrees).
+// kSettleAccel (deg/s^2), at least kMinSpeedDecayS, and shorter when needed to stay inside
+// the servo's start..stop range: the run-on never exceeds kRoomFactor * |v| * T1 times the
+// share of the room that the blend toward the target has not used yet (max over the settle
+// of speedRunOn / (1 - blendCurve)), so blend plus run-on cannot pass the range boundary.
+// Close to the boundary that means a hard stop, as the profile itself would make there.
 static constexpr float kSettleAccel = 2000.0f;
 static constexpr float kMinSpeedDecayS = 0.15f;
-static constexpr float kShortestSpeedDecayS = 0.05f;
-static constexpr float kRunOnFactor = 0.1975f;  // peak of the speed-term basis
-static constexpr float kAccelFactor = 3.94f;    // peak |second derivative| of that basis
+static constexpr float kRoomFactor = 0.402f;
+static constexpr float kAccelFactor = 3.94f;
 
 void Scene::tick(int64_t dtUs) {
     const int64_t sceneDtUs = running_ ? dtUs : 0;
@@ -87,7 +88,7 @@ void Scene::tick(int64_t dtUs) {
         } else if (!os.stopped && (running_ || os.refresh || !wasActive)) {
             // While the scene is held, outputs keep their state; only Release, per-output Go
             // and newly enabled outputs take the (frozen) scene's state once.
-            os.on = sequenceState(seq_[o], inCycleMs);
+            os.on = sequenceState(seq_[o], inCycleMs, periodMs_);
         }
         os.refresh = false;
     }
@@ -148,11 +149,12 @@ void Scene::startRejoin(int servo, bool keepSpeed) {
     st.from = st.out;
     st.e1 = vel;
     // Speed part: gentle enough for kSettleAccel, short enough not to run out of the range.
+    // A servo that an edit left outside its new range does not run on further out.
     float t1 = std::max(kMinSpeedDecayS, kAccelFactor * std::fabs(st.e1) / kSettleAccel);
     if (st.e1 != 0) {
         const float lo = std::min(s.startDeg, s.stopDeg), hi = std::max(s.startDeg, s.stopDeg);
         const float room = std::max(0.0f, st.e1 > 0 ? hi - st.out : st.out - lo);
-        t1 = std::min(t1, std::max(kShortestSpeedDecayS, room / (kRunOnFactor * std::fabs(st.e1))));
+        t1 = std::min(t1, room / (kRoomFactor * std::fabs(st.e1)));
     }
     st.speedDecayS = t1;
     // The whole settle lasts at least as long as its speed part.

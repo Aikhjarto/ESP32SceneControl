@@ -1,20 +1,22 @@
 #include "out/Pcf857x.h"
 
 #include "esp_log.h"
+#include "esp_timer.h"
 
 namespace ss {
 
 static const char* TAG = "pcf857x";
 
 constexpr int kTimeoutMs = 20;
-constexpr uint32_t kRefreshFlushes = 50;  // rewrite unchanged ports after this many flushes (~1 s)
-constexpr uint32_t kRetryFlushes = 250;   // look for a missing board again after ~5 s
+constexpr int64_t kRefreshUs = 1000000;  // rewrite an unchanged port after 1 s
+constexpr int64_t kRetryUs = 5000000;    // look for a missing board again after 5 s
 
 bool Pcf857x::begin(i2c_master_bus_handle_t bus, uint8_t addr, uint32_t sclHz, bool sixteenBit) {
     bus_ = bus;
     addr_ = addr;
     sclHz_ = sclHz;
     sixteen_ = sixteenBit;
+    lastTryUs_ = esp_timer_get_time();
     return open();
 }
 
@@ -43,13 +45,14 @@ void Pcf857x::set(int bit, bool high) {
 }
 
 void Pcf857x::flush() {
+    const int64_t now = esp_timer_get_time();
     if (!dev_) {
-        if (!bus_ || ++retryFlushes_ < kRetryFlushes) return;
-        retryFlushes_ = 0;
+        if (!bus_ || now - lastTryUs_ < kRetryUs) return;
+        lastTryUs_ = now;
         if (!open()) return;
     }
-    if (!dirty_ && ++idleFlushes_ < kRefreshFlushes) return;
-    idleFlushes_ = 0;
+    if (!dirty_ && now - lastWriteUs_ < kRefreshUs) return;
+    lastWriteUs_ = now;
     const uint8_t buf[2] = {static_cast<uint8_t>(port_ & 0xFF), static_cast<uint8_t>(port_ >> 8)};  // P0x, then P1x
     if (i2c_master_transmit(dev_, buf, sixteen_ ? 2 : 1, kTimeoutMs) == ESP_OK) {
         dirty_ = false;

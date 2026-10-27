@@ -154,4 +154,29 @@ float pulseUs(const ServoConfig& s, float deg) {
     return std::clamp(us, 100.0f, 3000.0f);
 }
 
+static bool sameCalibration(const ServoConfig& a, const ServoConfig& b) {
+    return a.minUs == b.minUs && a.maxUs == b.maxUs && a.rangeDeg == b.rangeDeg && a.trimUs == b.trimUs &&
+           a.invert == b.invert;
+}
+
+float PulseGlide::pulse(const ServoConfig& s, float deg, int64_t dtUs) {
+    const float us = pulseUs(s, deg);
+    if (!valid_) {
+        valid_ = true;
+        offsetUs_ = 0;
+        cal_ = s;
+        return us;
+    }
+    if (!sameCalibration(s, cal_)) {
+        offsetUs_ += pulseUs(cal_, deg) - us;
+        cal_ = s;
+    }
+    if (offsetUs_ != 0) {
+        const float range = s.rangeDeg > 0 ? s.rangeDeg : 180;
+        const float step = s.maxDps > 0 ? s.maxDps * std::fabs(s.maxUs - s.minUs) / range * dtUs / 1e6f : 1e9f;
+        offsetUs_ -= std::clamp(offsetUs_, -step, step);
+    }
+    return std::clamp(us + offsetUs_, 100.0f, 3000.0f);
+}
+
 }  // namespace ss

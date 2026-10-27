@@ -18,8 +18,9 @@ struct Sequence {
 // Returns false with a message if the text is not a valid sequence (empty text is valid).
 bool parseSequence(const char* text, Sequence& seq, std::string& err);
 
-// State at time tMs within the cycle: that of the last point at or before tMs; before the
-// first point, that of the last point (the sequence wraps with the cycle). Empty: off.
-bool sequenceState(const Sequence& seq, uint32_t tMs);
+// State at time tMs within a cycle of periodMs (0: unlimited): that of the last point at or
+// before tMs; before the first point, that of the last point within the cycle (the sequence
+// wraps with it). Points at or after periodMs are never reached. No point reached: off.
+bool sequenceState(const Sequence& seq, uint32_t tMs, uint32_t periodMs = 0);
 
 }  // namespace ss

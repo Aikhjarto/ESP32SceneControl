@@ -343,9 +343,10 @@ async function setSetting(path, value) {
   if (r.ok) {
     model.set(path, value);
     setDirty(true);
-  } else {
-    await send(`$${path}`, { quiet: true }).catch(() => {});
   }
+  // Read it back either way: the device's spelling (e.g. "none" for "None", "gpio.5" for
+  // "GPIO.5") is what the cards, plots and period computation compare against.
+  await send(`$${path}`, { quiet: true }).catch(() => {});
   refreshBound(path);
   onModelChanged(path);
   return r.ok;
@@ -590,10 +591,12 @@ function parseSeq(text) {
 }
 const seqText = (rows) => rows.map((r) => `${r.t}:${r.on ? 'on' : 'off'}`).join(',');
 
-function seqState(rows, tMs) {
-  if (!rows.length) return false;
-  let state = rows[rows.length - 1].on;  // wraps around from the end of the previous cycle
-  for (const r of rows) { if (r.t > tMs) break; state = r.on; }
+// Same as the firmware's sequenceState: points at or after the end of the cycle never count.
+function seqState(rows, tMs, period) {
+  const reached = rows.filter((r) => !(period > 0) || r.t < period);
+  if (!reached.length) return false;
+  let state = reached[reached.length - 1].on;  // wraps around from the end of the previous cycle
+  for (const r of reached) { if (r.t > tMs) break; state = r.on; }
   return state;
 }
 
@@ -734,7 +737,7 @@ function drawStrip(canvas, i, tMs, period) {
   ctx.fillStyle = css.getPropertyValue('--track');
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = css.getPropertyValue('--warn');
-  let on = seqState(rows, 0), from = 0;
+  let on = seqState(rows, 0, period), from = 0;
   for (const r of rows) {
     if (r.t >= period) break;
     if (on && !r.on) ctx.fillRect(x(from), 4, x(r.t) - x(from), h - 8);
@@ -841,7 +844,7 @@ function renderTimeline() {
       if (b > a) add('rect', { x: sx(a), y: y + 3, width: Math.max(1, sx(b) - sx(a)), height: rowH - 6, rx: 3, class: `on ${g}` });
     };
     const rows = parseSeq(model.get(op(i, 'seq')));
-    let on = seqState(rows, 0), from = 0;  // the sequence repeats every scene cycle
+    let on = seqState(rows, 0, period), from = 0;  // the sequence repeats every scene cycle
     for (const r of rows) {
       if (r.t >= period) break;
       if (on && !r.on) bar(from, r.t);

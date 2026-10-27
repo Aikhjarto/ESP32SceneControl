@@ -59,10 +59,13 @@ bool parseSequence(const char* text, Sequence& seq, std::string& err) {
     return true;
 }
 
-bool sequenceState(const Sequence& seq, uint32_t tMs) {
-    if (seq.count == 0) return false;
-    bool state = seq.on[seq.count - 1];  // wraps around from the end of the previous cycle
-    for (int k = 0; k < seq.count && seq.timeMs[k] <= tMs; ++k) state = seq.on[k];
+bool sequenceState(const Sequence& seq, uint32_t tMs, uint32_t periodMs) {
+    // Points at or after the end of the cycle are never reached, so they don't count.
+    int reached = seq.count;
+    while (periodMs > 0 && reached > 0 && seq.timeMs[reached - 1] >= periodMs) --reached;
+    if (reached == 0) return false;
+    bool state = seq.on[reached - 1];  // wraps around from the end of the previous cycle
+    for (int k = 0; k < reached && seq.timeMs[k] <= tMs; ++k) state = seq.on[k];
     return state;
 }
 

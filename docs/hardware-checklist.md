@@ -84,13 +84,15 @@ Measure **one servo per block** (servos 0–3 by default). The MCPWM clock setup
 - [ ] **PCF active low:** with an LED from V+ through a resistor to a PCF pin and `invert=true`, the LED lights exactly when the card's lamp is on.
 - [ ] **Hold and force:** global Stop freezes the outputs; `$Output/Stop=0` holds one while the others continue; `$Output/Set=0,on` forces it, `$Output/Release=0` returns to the sequence.
 - [ ] **Conflicts:** an output on a GPIO already used by a servo, I²C or the button, on GPIO12, or on a disabled/missing PCF board, is reported by `$I` and stays inactive. Two boards on the same I²C address are reported too.
-- [ ] **PCF after a warm restart:** switch an `invert=true` output on, then `$Bye`. After the restart it is off (rewritten within about a second), matching the UI.
+- [ ] **PCF after a warm restart:** switch an `invert=true` output on, then `$Bye`. It goes off just before the restart (not only after it) and stays off, matching the UI.
+- [ ] **Disabled PCF board:** with an output on that board on, `$/pcf/0/enable=false`, `$CS`, `$Bye`. Its pins are off after the restart.
 - [ ] **No I²C errors:** no `pcf857x … I2C write failed` lines in the log while outputs switch.
 
 ## 4. One real servo (MG90S)
 
 - [ ] **End stops:** with one servo on servo 0, test 0°, 90° and 180°. The servo must not buzz or strain at the ends. If it does, adjust `min_us` / `max_us` in the Calibrate tab.
 - [ ] **Direction:** if it's mirrored, set `invert=true`.
+- [ ] **Calibration edits glide:** while the scene runs, toggle `invert` or change `trim_us` by 200. The servo moves to the new position at about `max_dps`, with no jump.
 - [ ] **Test-mode speed:** a big slider jump moves the servo smoothly, at no more than `max_dps` (600 °/s).
 - [ ] **Persistence:** `$CS`, power-cycle, and the calibration is still there.
 

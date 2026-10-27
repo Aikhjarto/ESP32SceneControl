@@ -214,6 +214,45 @@ bool Settings::parsePin(const std::string& s, PinSpec& pin) {
     return false;
 }
 
+size_t utf8SequenceLength(const std::string& s, size_t i) {
+    const auto b = [&](size_t k) { return static_cast<uint8_t>(s[k]); };
+    const uint8_t c = b(i);
+    if (c < 0x80) return 1;
+    size_t n;
+    uint32_t cp;
+    if (c >= 0xC2 && c <= 0xDF) n = 2, cp = c & 0x1F;
+    else if (c >= 0xE0 && c <= 0xEF) n = 3, cp = c & 0x0F;
+    else if (c >= 0xF0 && c <= 0xF4) n = 4, cp = c & 0x07;
+    else return 0;
+    if (i + n > s.size()) return 0;
+    for (size_t k = 1; k < n; ++k) {
+        if ((b(i + k) & 0xC0) != 0x80) return 0;
+        cp = (cp << 6) | (b(i + k) & 0x3F);
+    }
+    if ((n == 3 && (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF))) || (n == 4 && (cp < 0x10000 || cp > 0x10FFFF))) return 0;
+    return n;
+}
+
+void makeValidUtf8(std::string& s) {
+    for (size_t i = 0; i < s.size();) {
+        const size_t n = utf8SequenceLength(s, i);
+        if (n == 0) s[i++] = '?';
+        else i += n;
+    }
+}
+
+// Names, SSID and the like end up in WebSocket text frames, the UI and the AP beacon:
+// UTF-8 only (a Latin-1 serial terminal would send other bytes), no control characters.
+static bool validText(const std::string& v, std::string& msg) {
+    for (size_t i = 0; i < v.size();) {
+        const size_t n = utf8SequenceLength(v, i);
+        const uint8_t c = static_cast<uint8_t>(v[i]);
+        if (n == 0 || c < 0x20 || c == 0x7F) return msg = "expected UTF-8 text without control characters", false;
+        i += n;
+    }
+    return true;
+}
+
 std::string Settings::formatPin(const PinSpec& pin) {
     char buf[16];
     switch (pin.type) {
@@ -379,7 +418,8 @@ Err Settings::set(const SettingRef& ref, const std::string& value, std::string& 
             *reinterpret_cast<float*>(p) = static_cast<float>(num);
             break;
         case FieldType::Str:
-            if (value.size() >= f.size) return msg = "at most " + std::to_string(f.size - 1) + " characters", Err::OutOfRange;
+            if (value.size() >= f.size) return msg = "at most " + std::to_string(f.size - 1) + " bytes", Err::OutOfRange;
+            if (!validText(value, msg)) return Err::BadValue;
             if (f.validate && !f.validate(value.c_str(), msg)) return Err::BadValue;
             std::memset(p, 0, f.size);
             value.copy(reinterpret_cast<char*>(p), value.size());

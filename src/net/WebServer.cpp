@@ -5,6 +5,7 @@
 
 #include "app/App.h"
 #include "app/Commands.h"
+#include "core/Settings.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -144,6 +145,7 @@ static void wsSendWork(void* arg) {
 
 static void wsQueue(int fd, uint32_t generation, std::string text, bool status) {
     if (!gServer || httpd_ws_get_fd_info(gServer, fd) != HTTPD_WS_CLIENT_WEBSOCKET) return;
+    makeValidUtf8(text);  // e.g. an error echoing a line from a Latin-1 serial terminal
     auto* m = new WsMessage{fd, generation, std::move(text), status};
     if (status) ++gStatusInFlight;
     if (xTaskGetCurrentTaskHandle() == gHttpdTask) {  // already in the httpd task (realtime replies)

@@ -143,15 +143,16 @@ Peak speed compared with a constant-speed move: `const` 1×, `trap` 1/(1−a) wh
 
 - **Global Stop** (button, `!`, header button) freezes the scene clock. Every servo holds its position, and **Go** carries on exactly where it stopped.
 - **Per-servo Stop** holds just that servo while the scene keeps running. On **Go** the servo *rejoins*: starting from rest, it blends from where it is onto its still-moving target with smooth (minimum-jerk) curves. The position correction lasts at least `$/scene/rejoin_ms` and is lengthened so it stays under `max_dps`; while the target itself is moving, the servo briefly moves at up to the sum of both speeds. When the blend finishes, the servo is exactly back in sync.
-- **Other rejoins:** the same blend is used after a scene reset, after test mode and after re-enabling a servo (all from rest). Editing a servo's motion or a change of the scene cycle while it moves keeps its current speed: it runs on and turns smoothly toward its new target, braking at up to about 2000 °/s² (harder when needed to stay within its start..stop range), so it neither jumps nor stalls. An edit that doesn't change where the servo is going leaves its motion untouched.
+- **Other rejoins:** the same blend is used after a scene reset, after test mode and after re-enabling a servo (all from rest). Editing a servo's motion or a change of the scene cycle while it moves keeps its current speed: it runs on and turns smoothly toward its new target, braking at up to about 2000 °/s², so it neither jumps nor stalls. It never runs on past its start..stop range: close to the boundary it brakes harder, as its profile would there, and a servo that an edit leaves outside its new range stops and moves back in. An edit that doesn't change where the servo is going leaves its motion untouched.
 
 ## Digital outputs
 
 Each output has a name and a sequence of switch points within the scene cycle, e.g.
 `$/out/0/seq=0:on,500:off,1200:on,1500:off` (times in ms from the start of the cycle,
 increasing, at most 16 points). Before the first point an output keeps the state of the
-last one, so a sequence wraps around the cycle. Outputs share the scene clock with the
-servos:
+last one, so a sequence wraps around the cycle. Points at or after the end of a fixed
+`$/scene/period_ms` are never reached and have no effect (you get a warning). Outputs
+share the scene clock with the servos:
 
 - **Global Stop** holds every output in its current state, and **Go** continues. While
   held, editing a sequence takes effect on Go; Force, Release and per-output Go still act.
@@ -164,11 +165,15 @@ PCF8574 (8 bits) and PCF8575 (16 bits) boards sit on the same I²C bus as the PC
 (`$/pcf/<0..7>/enable`, `type`, `addr`, default addresses 0x20–0x27; PCF8574A boards use
 0x38–0x3F). Their pins are quasi-bidirectional: "high" is only a weak pull-up, so drive
 LEDs or relay inputs **active low** (LED from V+ through a resistor to the pin, `invert=true`).
-Disabled outputs, and all outputs at boot, are "off". Each PCF board is rewritten about once
-a second, so its pins are right again after an ESP restart or a brown-out of the board; a
-board that does not answer at boot is looked for again every 5 s and used once it appears.
-An output keeps the wiring it booted with until the next restart: after `$RST=*` or a restore
-that changes its pin or `invert`, "off" stays "off" on the existing hardware.
+Disabled outputs, all outputs at boot, and all outputs just before a software restart
+(`$Bye`, after an update or a setting that needs one) are "off". Each PCF board is
+rewritten once a second, so its pins are right again after an ESP restart or a brown-out
+of the board; a board that does not answer at boot is looked for again every 5 s and used
+once it appears.
+An output keeps the pin it booted with until the next restart. After `$RST=*` or a restore
+that moves it to another pin (or none), it keeps that pin's boot `invert` too, so "off" stays
+"off" on the existing hardware. A new `invert` for the same pin applies at once, as when you
+edit it.
 GPIO12 is refused for outputs (a load pulling it high at reset stops the ESP32 from booting);
 GPIO 0, 2, 5 and 15 are allowed with a startup warning, as they are boot strapping pins too.
 
@@ -239,6 +244,9 @@ Paths are case-insensitive. "R" means the change applies after a restart (`$Bye`
 | `trim_us` | 0 | −500–500 | |
 | `invert` | `false` | mirror the direction | |
 | `max_dps` | 600 | speed limit in °/s, 0 = none (MG90S ≈ 600 °/s at 4.8 V) | |
+
+Changing `min_us`, `max_us`, `range_deg`, `trim_us` or `invert` while a servo is powered
+glides its pulse to the new calibration at `max_dps` instead of jumping.
 
 **Other groups**
 

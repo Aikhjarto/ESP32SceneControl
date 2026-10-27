@@ -109,6 +109,14 @@ void test_sequence_state_wraps() {
     TEST_ASSERT_TRUE(sequenceState(s, 100));   // still on from the end of the previous cycle
     Sequence empty;
     TEST_ASSERT_FALSE(sequenceState(empty, 100));
+    // Sixth review: a point after the end of the cycle is never reached and sets no state.
+    parseSequence("200:on,600:off,1500:on", s, err);
+    TEST_ASSERT_FALSE(sequenceState(s, 100, 1000));
+    TEST_ASSERT_TRUE(sequenceState(s, 300, 1000));
+    TEST_ASSERT_FALSE(sequenceState(s, 700, 1000));
+    TEST_ASSERT_TRUE(sequenceState(s, 100, 2000));  // reached with a longer cycle
+    parseSequence("1500:on", s, err);
+    TEST_ASSERT_FALSE(sequenceState(s, 100, 1000));
 }
 
 static void wireOutput(int o, const char* seq) {

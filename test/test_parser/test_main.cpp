@@ -1,6 +1,7 @@
 // Native unit tests for the settings tree and the FluidNC-style command parser.
 #include <unity.h>
 
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -8,6 +9,7 @@
 #include "core/LineReader.h"
 #include "core/Parser.h"
 #include "core/Scene.h"
+#include "core/Settings.h"
 
 using namespace ss;
 
@@ -114,6 +116,49 @@ void test_zero_duration_warns_without_inf() {
     Capture c = exec("$/servo/0/duration_ms=0");
     TEST_ASSERT_TRUE(c.hasPrefix("[MSG:WARN: servo 0 has duration 0 ms"));
     for (const auto& l : c.lines) TEST_ASSERT_TRUE(l.find("inf") == std::string::npos);
+}
+
+// Sixth review: settles that keep speed (period change, own edit) stay inside start..stop.
+void test_period_change_keeps_servos_in_range() {
+    scene->setRunning(true);
+    for (int i = 0; i < 32; ++i) exec("$/servo/" + std::to_string(i) + "/duration_ms=300");  // 562 deg/s
+    for (int k = 0; k < 598; ++k) scene->tick(20000);
+    exec("$/servo/31/delay_ms=4391");  // new automatic period
+    float worst = 0;
+    for (int k = 0; k < 150; ++k) {
+        scene->tick(20000);
+        for (int i = 0; i < 31; ++i) worst = std::fmax(worst, std::fmax(scene->output(i) - 135, 45 - scene->output(i)));
+    }
+    TEST_ASSERT_TRUE(worst < 1e-3f);
+}
+
+void test_edit_keeps_servo_in_range() {
+    for (int i = 1; i < kMaxServos; ++i) cfg.servo[i].enable = false;
+    scene->setRunning(true);
+    for (const char* l : {"start_deg=11", "stop_deg=176", "duration_ms=423", "dwell_ms=589", "delay_ms=666",
+                          "profile=trap", "mode=pingpong"}) {
+        exec(std::string("$/servo/0/") + l);
+    }
+    for (int k = 0; k < 194; ++k) scene->tick(20000);  // moving down at ~520 deg/s
+    exec("$/servo/0/dwell_ms=514");
+    float lowest = 1e9f;
+    for (int k = 0; k < 60; ++k) {
+        scene->tick(20000);
+        lowest = std::fmin(lowest, scene->output(0));
+    }
+    TEST_ASSERT_TRUE(lowest >= 11 - 1e-3f);
+}
+
+// Sixth review: names etc. end up in WebSocket text frames, which must be valid UTF-8.
+void test_text_must_be_utf8_without_control_characters() {
+    TEST_ASSERT_EQUAL_STRING("error:2", exec("$/servo/0/name=B\xE4r").last().c_str());
+    TEST_ASSERT_EQUAL_STRING("error:2", exec("$/servo/0/name=a\tb").last().c_str());
+    TEST_ASSERT_EQUAL_STRING("error:2", exec("$AP/SSID=\xC0\xAF").last().c_str());  // overlong '/'
+    TEST_ASSERT_EQUAL_STRING("ok", exec("$/servo/0/name=B\xC3\xA4r \xE2\x82\xAC").last().c_str());  // "Bär €"
+    TEST_ASSERT_EQUAL_STRING("B\xC3\xA4r \xE2\x82\xAC", cfg.servo[0].name);
+    std::string s = "ok \xE4 \xF0\x9F\x98\x80 \xED\xA0\x80";  // Latin-1, emoji, surrogate
+    makeValidUtf8(s);
+    TEST_ASSERT_EQUAL_STRING("ok ? \xF0\x9F\x98\x80 ???", s.c_str());
 }
 
 void test_speed_warning() {
@@ -334,6 +379,9 @@ int main() {
     RUN_TEST(test_reboot_settings_say_so);
     RUN_TEST(test_speed_warning);
     RUN_TEST(test_zero_duration_warns_without_inf);
+    RUN_TEST(test_period_change_keeps_servos_in_range);
+    RUN_TEST(test_edit_keeps_servo_in_range);
+    RUN_TEST(test_text_must_be_utf8_without_control_characters);
     RUN_TEST(test_named_settings_and_secret_masking);
     RUN_TEST(test_subtree_listing);
     RUN_TEST(test_save_writes_only_changes_and_replay_restores);

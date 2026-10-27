@@ -123,6 +123,29 @@ void test_pulse_mapping() {
     TEST_ASSERT_EQUAL_FLOAT(2400, pulseUs(s, 0));
 }
 
+// Sixth review: calibration edits glide the pulse at max_dps instead of jumping.
+void test_calibration_edit_glides_the_pulse() {
+    ServoConfig s = cfg.servo[0];  // 500..2400 us over 180 deg, max_dps 600 -> 6333 us/s
+    PulseGlide g;
+    TEST_ASSERT_EQUAL_FLOAT(1450, g.pulse(s, 90, 20000));
+    TEST_ASSERT_EQUAL_FLOAT(690, g.pulse(s, 18, 20000));  // ordinary motion is not limited
+    s.invert = true;  // 690 -> 2210 us
+    float prev = 690, last = 0;
+    for (int k = 0; k < 20; ++k) {
+        last = g.pulse(s, 18, 20000);
+        TEST_ASSERT_TRUE(last - prev <= 6333 * 0.02f + 0.5f);
+        prev = last;
+    }
+    TEST_ASSERT_EQUAL_FLOAT(2210, last);  // 1520 us at 126.7 us per tick: there after 12 ticks
+    s.trimUs = 20;
+    s.maxDps = 0;  // no limit: at once
+    TEST_ASSERT_EQUAL_FLOAT(2230, g.pulse(s, 18, 20000));
+    g.reset();  // powered off and on again: no glide
+    s.maxDps = 600;
+    s.invert = false;
+    TEST_ASSERT_EQUAL_FLOAT(710, g.pulse(s, 18, 20000));
+}
+
 static void run(Scene& sc, int64_t ms) {
     for (int64_t t = 0; t < ms; t += 20) sc.tick(20000);
 }
@@ -384,8 +407,9 @@ static int longestHoldAfterEdit(void (*edit)(ServoConfig&), float& lo, float& hi
 
 void test_edit_while_moving_does_not_stall() {
     float lo, hi;
-    TEST_ASSERT_TRUE(longestHoldAfterEdit([](ServoConfig& s) { s.stopDeg = 50; }, lo, hi) <= 1);
-    TEST_ASSERT_TRUE(hi < 85);  // runs on a little past where it was (~74 deg), then turns
+    // Left outside its new range (at ~74 deg): it doesn't run on further out, it turns back.
+    longestHoldAfterEdit([](ServoConfig& s) { s.stopDeg = 50; }, lo, hi);
+    TEST_ASSERT_TRUE(hi < 75);
     TEST_ASSERT_TRUE(longestHoldAfterEdit([](ServoConfig& s) { s.durationMs = 3000; }, lo, hi) <= 1);
     TEST_ASSERT_TRUE(lo >= 45 - 1e-3f && hi <= 135 + 1e-3f);
 }
@@ -423,6 +447,7 @@ int main() {
     RUN_TEST(test_pingpong_runs_independent_of_period);
     RUN_TEST(test_auto_period_is_longest_servo);
     RUN_TEST(test_pulse_mapping);
+    RUN_TEST(test_calibration_edit_glides_the_pulse);
     RUN_TEST(test_global_hold_freezes_everything);
     RUN_TEST(test_servo_stop_holds_while_scene_moves_on);
     RUN_TEST(test_rejoin_is_smooth_and_resyncs);
