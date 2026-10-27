@@ -1,4 +1,4 @@
-// ESP32PWM — servo scene controller, application entry point.
+// ESP32SceneControl — servo scene controller, application entry point.
 
 #include "app/App.h"
 #include "app/Commands.h"
@@ -42,7 +42,7 @@ static void logChipInfo() {
     esp_chip_info(&chip);
     uint32_t flashSize = 0;
     esp_flash_get_size(nullptr, &flashSize);
-    ESP_LOGI(TAG, "ESP32PWM, ESP-IDF %s, %d core(s), rev %d.%d, %lu MB flash", esp_get_idf_version(), chip.cores,
+    ESP_LOGI(TAG, "ESP32SceneControl, ESP-IDF %s, %d core(s), rev %d.%d, %lu MB flash", esp_get_idf_version(), chip.cores,
              chip.revision / 100, chip.revision % 100, static_cast<unsigned long>(flashSize >> 20));
 }
 

@@ -45,7 +45,7 @@ struct SimHost : Host {
     }
     void reboot() override { boot(); }
     void info(ReplySink& out) override {
-        out.line("[VER:sim ESP32PWM]");
+        out.line("[VER:sim ESP32SceneControl]");
         out.line("[OPT:desktop simulator]");
         out.line("[MSG:INFO: Firmware sim in ota_0 (simulator)]");
         out.line("[UPDATE:http://127.0.0.1:9999/firmware.bin]");

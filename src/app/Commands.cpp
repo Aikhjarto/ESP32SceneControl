@@ -149,7 +149,7 @@ public:
     void info(ReplySink& out) override {
         char buf[160];
         const esp_app_desc_t* app = esp_app_get_description();
-        snprintf(buf, sizeof(buf), "[VER:%s ESP32PWM]", app->version);
+        snprintf(buf, sizeof(buf), "[VER:%s ESP32SceneControl]", app->version);
         out.line(buf);
         esp_chip_info_t chip;
         esp_chip_info(&chip);

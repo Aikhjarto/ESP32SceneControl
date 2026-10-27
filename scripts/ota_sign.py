@@ -6,7 +6,8 @@
 # espsecure "version 1" format). Serial flashing keeps using the plain firmware.bin
 # and never needs the key.
 #
-# Key location: custom_ota_signing_key in platformio.ini, or $ESP32PWM_OTA_KEY.
+# Key location: custom_ota_signing_key in platformio.ini, or $ESP32SCENECONTROL_OTA_KEY.
+# The key's location from before the project was renamed (ESP32PWM) is still found.
 Import("env")  # noqa: F821 (provided by PlatformIO)
 
 import glob
@@ -18,8 +19,12 @@ core_dir = env.subst("$PROJECT_CORE_DIR")  # noqa: F821
 build_dir = env.subst("$BUILD_DIR")  # noqa: F821
 tool = os.path.join(project_dir, "scripts", "ota_sign_tool.py")
 
-key = os.environ.get("ESP32PWM_OTA_KEY") or env.GetProjectOption("custom_ota_signing_key", "")  # noqa: F821
+key = os.environ.get("ESP32SCENECONTROL_OTA_KEY") or env.GetProjectOption("custom_ota_signing_key", "")  # noqa: F821
 key = os.path.expanduser(key) if key else ""
+legacy_key = os.path.expanduser("~/.config/esp32pwm/ota_signing_key.pem")
+if key and not os.path.exists(key) and os.path.exists(legacy_key):
+    print(f"OTA signing: using {legacy_key}; move it to {key}")
+    key = legacy_key
 verify_key = os.path.join(project_dir, "keys", "ota_verify_key.bin")
 
 

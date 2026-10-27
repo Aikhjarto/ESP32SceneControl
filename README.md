@@ -1,4 +1,4 @@
-# ESP32PWM — servo scene controller
+# ESP32SceneControl — servo scene controller
 
 Animates a scene of figurines with many hobby servos (MG90S by default) from an ESP32.
 Every servo moves between a start and a stop angle with its own duration, delay,
@@ -70,7 +70,7 @@ The ESP only installs firmware that is **signed with the project key**.
 
 | File | Role |
 |---|---|
-| `~/.config/esp32pwm/ota_signing_key.pem` | Private key. Stays outside the repo. **Back it up.** Set a different path with `custom_ota_signing_key` in `platformio.ini` or `$ESP32PWM_OTA_KEY`. |
+| `~/.config/esp32scenecontrol/ota_signing_key.pem` | Private key. Stays outside the repo. **Back it up.** Set a different path with `custom_ota_signing_key` in `platformio.ini` or `$ESP32SCENECONTROL_OTA_KEY`. |
 | `keys/ota_verify_key.bin` | Public key, committed. Embedded in the firmware and refreshed from the private key on every build. |
 
 Every `pio run` writes two files to `.pio/build/esp32dev/`:
@@ -80,7 +80,7 @@ Every `pio run` writes two files to `.pio/build/esp32dev/`:
 To create a new key, use any Python with the `cryptography` package, e.g. ESP-IDF's environment:
 
 ```sh
-~/.platformio/penv/.espidf-6.1.0/bin/python scripts/ota_sign_tool.py genkey ~/.config/esp32pwm/ota_signing_key.pem
+~/.platformio/penv/.espidf-6.1.0/bin/python scripts/ota_sign_tool.py genkey ~/.config/esp32scenecontrol/ota_signing_key.pem
 ```
 
 `scripts/ota_sign_tool.py` can also `sign` and `verify` images by hand.

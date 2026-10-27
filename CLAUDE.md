@@ -5,6 +5,12 @@ one shared scene clock. Configured over the ESP's WiFi access point (web UI) or 
 with FluidNC-style `$` commands. User-facing documentation is [README.md](README.md);
 this file holds the decisions, rules and state a new session needs to continue the work.
 
+The project is called **ESP32SceneControl** (renamed from ESP32PWM on 2026-10-27; the
+checkout folder may still have the old name). The OTA update refuses images whose ESP-IDF
+project name differs from the running one, so a board that runs a build from before the
+rename needs one serial flash. The default AP name `ServoScene-XXXX`, hostname and
+password `servoscene` were not part of the rename.
+
 ## Working rules (from the user)
 
 - **Ask before installing anything:** any platform, toolchain, tool or pip package,
@@ -13,7 +19,7 @@ this file holds the decisions, rules and state a new session needs to continue t
   group of review fixes, and only once it builds and the native tests pass.
 - **Reviews:** don't start a new review agent unless the user asks for one. When the user
   asks for a review, fix all its findings unless they say otherwise.
-- **OTA signing key:** `~/.config/esp32pwm/ota_signing_key.pem` (or `$ESP32PWM_OTA_KEY`)
+- **OTA signing key:** `~/.config/esp32scenecontrol/ota_signing_key.pem` (or `$ESP32SCENECONTROL_OTA_KEY`)
   stays outside the repo and is never committed or printed. Only the public key
   `keys/ota_verify_key.bin` is in git. On a new machine the user copies the .pem securely.
 - **Simulator:** the user often has their own simulator running on port 8080 with

@@ -18,7 +18,7 @@ Each item says what to do and what result to expect.
   - optional: PCA9685 board, one MG90S for the first tests
 - [ ] **Wiring:** servo supply ground connected to ESP ground. Servos must **not** be powered from the ESP's 5 V pin.
 - [ ] **Firewall:** port 9999/tcp is open on the laptop for OTA tests: `sudo firewall-cmd --add-port=9999/tcp`.
-- [ ] **Signing key:** `~/.config/esp32pwm/ota_signing_key.pem` exists and is backed up.
+- [ ] **Signing key:** `~/.config/esp32scenecontrol/ota_signing_key.pem` exists and is backed up.
 
 ## 1. First flash over serial and boot
 
@@ -32,7 +32,7 @@ Each item says what to do and what result to expect.
   - [ ] `access point "ServoScene-XXXX"` appears
   - [ ] `web server on http://192.168.4.1/` appears
 - [ ] **`$I` output:**
-  - [ ] `[VER:0.1.0 ESP32PWM]`
+  - [ ] `[VER:0.1.0 ESP32SceneControl]`
   - [ ] `Firmware 0.1.0 in ota_0`
   - [ ] one `[SERVO:n gpio.X <block>]` line per servo
   - [ ] the only `[MSG:WARN:` line is "PCA9685 board 0 not found", if no board is attached
