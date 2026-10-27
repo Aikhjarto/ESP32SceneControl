@@ -46,7 +46,12 @@ this file holds the decisions, rules and state a new session needs to continue t
 - **Timeline:** a looped cycle with a per-servo mode (once / return / pingpong), delay and
   dwell. The automatic period also covers the outputs' last switch point, rounded up to
   the next full second. Firmware (`effectivePeriodMs`) and `web/app.js` must agree.
-- **Digital outputs:** named, with on/off switch-point lists within the cycle.
+- **Digital outputs:** named, with switch-point lists within the cycle. A point's state is
+  on, off or a blinking pattern (blink, flash, flicker, heartbeat; the user chose all four
+  and "pattern as a state in the sequence" over one pattern per output). A pattern starts
+  at its switch point, so it stays in sync. The flicker is a deterministic hash of output,
+  point and slot, which `web/app.js` mirrors exactly (`Math.imul`).
+  - `seq` stays 200 bytes: longer would push the worst-case saved config past 64 KB.
   - Hardware: free GPIOs or PCF8574/PCF8575 bits (`pcf.B.C`).
   - The invert setting is latched at boot for the pin it was booted with, so `$RST=*`
     can't turn active-low outputs on.
@@ -88,7 +93,7 @@ this file holds the decisions, rules and state a new session needs to continue t
   `.pio/build/esp32dev/firmware-signed.bin`.
 - `tools/sim/main.cpp` and `tools/sim_server.py`: a desktop simulator for the web UI.
   It needs aiohttp.
-- `test/test_motion`, `test/test_parser`, `test/test_outputs`: Unity tests, 68 in total.
+- `test/test_motion`, `test/test_parser`, `test/test_outputs`: Unity tests, 71 in total.
 - `docs/hardware-checklist.md`: the bring-up plan for real hardware.
 
 ## Build and test
@@ -97,7 +102,7 @@ this file holds the decisions, rules and state a new session needs to continue t
 
 ```sh
 pio run                     # firmware + firmware-signed.bin (needs the signing key)
-pio test -e native          # 68 host tests; run them before every commit
+pio test -e native          # 71 host tests; run them before every commit
 python3 tools/sim_server.py --port 8791 --config <scratch>/sim.txt   # UI against the simulator
 ```
 
@@ -130,7 +135,7 @@ ESP-IDF 6.1 pitfalls hit so far:
 ## Status (2026-10-27)
 
 - All milestones and six review rounds are done and committed.
-  - Verified by the firmware build (55% flash, 30% RAM), 68 native tests and
+  - Verified by the firmware build (55% flash, 30% RAM), 71 native tests and
     headless-browser runs against the simulator.
 - **Not yet tested on real hardware:** no ESP32 has been connected. The next step is to
   work through [docs/hardware-checklist.md](docs/hardware-checklist.md) in order.

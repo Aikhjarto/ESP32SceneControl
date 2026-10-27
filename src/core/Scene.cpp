@@ -88,7 +88,7 @@ void Scene::tick(int64_t dtUs) {
         } else if (!os.stopped && (running_ || os.refresh || !wasActive)) {
             // While the scene is held, outputs keep their state; only Release, per-output Go
             // and newly enabled outputs take the (frozen) scene's state once.
-            os.on = sequenceState(seq_[o], inCycleMs, periodMs_);
+            os.on = sequenceState(seq_[o], inCycleMs, periodMs_, static_cast<uint32_t>(o));
         }
         os.refresh = false;
     }

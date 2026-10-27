@@ -1,5 +1,6 @@
 #include "core/Parser.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -174,6 +175,18 @@ void Parser::afterChange(const SettingRef& ref, ReplySink& out) {
             (ref.field->offset == offsetof(OutputConfig, seq) || ref.field->offset == offsetof(OutputConfig, enable) ||
              ref.field->offset == offsetof(OutputConfig, pin))) {
             warnUnreachedSwitchPoints(out);
+        }
+        if (ref.group->base == offsetof(Config, out) && ref.field->offset == offsetof(OutputConfig, seq)) {
+            // Outputs change only once per motion tick: shorter pattern times are not shown faithfully.
+            Sequence seq;
+            std::string err;
+            const uint32_t tickMs = 1000 / std::max<uint32_t>(cfg_.scene.updateHz, 1);
+            const uint32_t shortest = parseSequence(cfg_.out[ref.index].seq, seq, err) ? shortestPatternMs(seq) : 0;
+            if (shortest > 0 && shortest < tickMs) {
+                out.line("[MSG:WARN: output " + std::to_string(ref.index) + " has pattern times of " +
+                         std::to_string(shortest) + " ms; outputs change only every " + std::to_string(tickMs) +
+                         " ms ($/scene/update_hz)]");
+            }
         }
         return;
     }
@@ -443,11 +456,12 @@ Err Parser::command(const std::string& name, const std::string& value, bool hasV
         if (e != Err::Ok) return e;
         std::string state = comma == std::string::npos ? "" : trim(value.substr(comma + 1));
         Sequence probe;  // reuse the sequence parser for "on"/"off"
-        if (state.empty() || !parseSequence(("0:" + state).c_str(), probe, msg) || probe.count != 1) {
+        if (state.empty() || !parseSequence(("0:" + state).c_str(), probe, msg) || probe.count != 1 ||
+            (probe.state[0] != OutState::On && probe.state[0] != OutState::Off)) {
             msg = "use $Output/Set=<output>,on|off";
             return Err::BadValue;
         }
-        scene_.outputTest(o, probe.on[0]);
+        scene_.outputTest(o, probe.state[0] == OutState::On);
         return Err::Ok;
     }
     if (is("Output/Release")) {

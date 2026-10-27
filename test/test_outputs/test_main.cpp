@@ -70,8 +70,8 @@ void test_parse_sequence() {
     TEST_ASSERT_TRUE(parseSequence("0:on, 500:off,1200:ON,1500:0", s, err));
     TEST_ASSERT_EQUAL(4, s.count);
     TEST_ASSERT_EQUAL_UINT32(1200, s.timeMs[2]);
-    TEST_ASSERT_TRUE(s.on[2]);
-    TEST_ASSERT_FALSE(s.on[3]);
+    TEST_ASSERT_TRUE(s.state[2] == OutState::On);
+    TEST_ASSERT_TRUE(s.state[3] == OutState::Off);
     TEST_ASSERT_TRUE(parseSequence("", s, err));
     TEST_ASSERT_EQUAL(0, s.count);
 
@@ -94,6 +94,83 @@ void test_longest_sequence_fits() {
     exec("$/out/0/pin=gpio.12");
     TEST_ASSERT_EQUAL_STRING("ok", exec("$/out/0/seq=" + seq).last().c_str());
     TEST_ASSERT_EQUAL_STRING(seq.c_str(), cfg.out[0].seq);
+}
+
+void test_parse_patterns() {
+    Sequence s;
+    std::string err;
+    TEST_ASSERT_TRUE(parseSequence("0:blink,1000:blink 100/200 2000:flash 3,3000:flicker/90,4000:heartbeat 600,5000:off", s, err));
+    TEST_ASSERT_EQUAL(6, s.count);
+    TEST_ASSERT_TRUE(s.state[0] == OutState::Blink);
+    TEST_ASSERT_EQUAL_UINT16(500, s.param[0][0]);  // defaults
+    TEST_ASSERT_EQUAL_UINT16(500, s.param[0][1]);
+    TEST_ASSERT_EQUAL_UINT16(100, s.param[1][0]);
+    TEST_ASSERT_EQUAL_UINT16(200, s.param[1][1]);
+    TEST_ASSERT_EQUAL_UINT32(2000, s.timeMs[2]);   // "200 2000:flash": 2000 is the next point
+    TEST_ASSERT_EQUAL_UINT16(3, s.param[2][0]);
+    TEST_ASSERT_EQUAL_UINT16(60, s.param[2][1]);   // rest from the defaults
+    TEST_ASSERT_EQUAL_UINT16(800, s.param[2][3]);
+    TEST_ASSERT_EQUAL_UINT16(90, s.param[3][0]);
+    TEST_ASSERT_EQUAL_UINT16(50, s.param[3][1]);
+    TEST_ASSERT_EQUAL_UINT16(600, s.param[4][0]);
+    TEST_ASSERT_TRUE(parseSequence("0:blink 500:off", s, err));  // no parameters, next point
+    TEST_ASSERT_EQUAL(2, s.count);
+    for (const char* bad : {"0:on 5", "0:blink 1/2/3", "0:blink 0", "0:flash 21", "0:flicker 101", "0:heartbeat 50",
+                            "0:blink 100/", "0:blink 70000", "0:strobe", "0:blink 100x"}) {
+        err.clear();
+        TEST_ASSERT_FALSE_MESSAGE(parseSequence(bad, s, err), bad);
+        TEST_ASSERT_FALSE(err.empty());
+    }
+}
+
+void test_pattern_timing() {
+    Sequence s;
+    std::string err;
+    parseSequence("1000:blink 100/200", s, err);
+    TEST_ASSERT_TRUE(sequenceState(s, 1000, 0));   // starts "on" at its switch point
+    TEST_ASSERT_TRUE(sequenceState(s, 1099, 0));
+    TEST_ASSERT_FALSE(sequenceState(s, 1100, 0));
+    TEST_ASSERT_TRUE(sequenceState(s, 1300, 0));
+    // Wrapping: in a 2000 ms cycle the pattern runs from 1000 through 0 to 999.
+    TEST_ASSERT_TRUE(sequenceState(s, 200, 2000));   // 1200 ms into the pattern: 1200 % 300 = 0
+    TEST_ASSERT_FALSE(sequenceState(s, 100, 2000));  // 1100 % 300 = 200: off
+    parseSequence("0:flash 2/50/100/500", s, err);  // on 0-50, 150-200; next group at 700
+    const int on[] = {0, 49, 150, 199, 700, 749, 850};
+    const int off[] = {50, 149, 200, 699, 750, 900, 1399};
+    for (int t : on) TEST_ASSERT_TRUE_MESSAGE(sequenceState(s, t, 0), std::to_string(t).c_str());
+    for (int t : off) TEST_ASSERT_FALSE_MESSAGE(sequenceState(s, t, 0), std::to_string(t).c_str());
+    parseSequence("0:heartbeat 1000", s, err);  // on 0-100 and 250-350
+    TEST_ASSERT_TRUE(sequenceState(s, 99, 0));
+    TEST_ASSERT_FALSE(sequenceState(s, 100, 0));
+    TEST_ASSERT_TRUE(sequenceState(s, 250, 0));
+    TEST_ASSERT_FALSE(sequenceState(s, 350, 0));
+    TEST_ASSERT_TRUE(sequenceState(s, 1050, 0));
+    // Flicker: repeatable, constant within a slot, different per output, close to on_pct.
+    parseSequence("0:flicker 70/40", s, err);
+    int ons = 0, diff = 0;
+    for (uint32_t t = 0; t < 400000; t += 40) {
+        const bool a = sequenceState(s, t, 0, 3);
+        TEST_ASSERT_EQUAL(a, sequenceState(s, t, 0, 3));
+        TEST_ASSERT_EQUAL(a, sequenceState(s, t + 39, 0, 3));
+        ons += a;
+        diff += a != sequenceState(s, t, 0, 4);
+    }
+    TEST_ASSERT_INT_WITHIN(300, 7000, ons);  // of 10000 slots
+    TEST_ASSERT_TRUE(diff > 2000);
+    parseSequence("0:flicker 0,100:flicker 100", s, err);
+    TEST_ASSERT_FALSE(sequenceState(s, 50, 0));
+    TEST_ASSERT_TRUE(sequenceState(s, 150, 0));
+}
+
+void test_pattern_warnings_and_force() {
+    Capture c = exec("$/out/0/seq=0:blink 10/500");
+    TEST_ASSERT_EQUAL_STRING("ok", c.last().c_str());
+    TEST_ASSERT_TRUE(c.hasPrefix("[MSG:WARN: output 0 has pattern times of 10 ms"));
+    TEST_ASSERT_FALSE(exec("$/out/0/seq=0:blink 20/500").hasPrefix("[MSG:WARN: output 0 has pattern"));
+    exec("$/out/0/pin=gpio.12");
+    exec("$/out/0/enable=true");
+    TEST_ASSERT_EQUAL_STRING("error:2", exec("$Output/Set=0,blink").last().c_str());
+    TEST_ASSERT_EQUAL_STRING("ok", exec("$Output/Set=0,on").last().c_str());
 }
 
 void test_sequence_state_wraps() {
@@ -268,6 +345,9 @@ int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parse_sequence);
     RUN_TEST(test_longest_sequence_fits);
+    RUN_TEST(test_parse_patterns);
+    RUN_TEST(test_pattern_timing);
+    RUN_TEST(test_pattern_warnings_and_force);
     RUN_TEST(test_sequence_state_wraps);
     RUN_TEST(test_output_follows_scene_clock);
     RUN_TEST(test_global_hold_and_output_stop);

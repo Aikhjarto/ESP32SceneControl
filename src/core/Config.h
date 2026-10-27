@@ -104,8 +104,8 @@ struct OutputConfig {
     PinSpec pin;   // gpio.N or pcf.B.C
     bool enable;
     bool invert;   // output level low when "on" (active-low LEDs, relay boards)
-    char seq[200]; // switch points "ms:on|off,..." within the scene cycle, e.g. "0:on,500:off"
-                   // (fits kMaxSwitchPoints points with 7-digit times)
+    char seq[200]; // switch points "ms:state,..." within the scene cycle, e.g. "0:on,500:off,900:blink"
+                   // (see Sequence.h; fits kMaxSwitchPoints on/off points with 7-digit times)
 };
 
 enum class PcfType : uint8_t { Pcf8574, Pcf8575, Count };

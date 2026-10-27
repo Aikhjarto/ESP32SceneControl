@@ -86,6 +86,8 @@ Measure **one servo per block** (servos 0–3 by default). The MCPWM clock setup
 - [ ] **Conflicts:** an output on a GPIO already used by a servo, I²C or the button, on GPIO12, or on a disabled/missing PCF board, is reported by `$I` and stays inactive. Two boards on the same I²C address are reported too.
 - [ ] **PCF after a warm restart:** switch an `invert=true` output on, then `$Bye`. It goes off just before the restart (not only after it) and stays off, matching the UI.
 - [ ] **Disabled PCF board:** with an output on that board on, `$/pcf/0/enable=false`, `$CS`, `$Bye`. Its pins are off after the restart.
+- [ ] **Blinking patterns:** `seq=0:blink 100/100,4000:flash 3,8000:flicker,12000:heartbeat` on a GPIO and on a PCF output. On the scope, blink gives 100 ms high / 100 ms low (±20 ms, one motion tick) and flash three 60 ms pulses; the LEDs match the lamps and the strips in the UI.
+- [ ] **Many PCF outputs blinking:** 16 outputs on one PCF8575 with `flicker 50/20`: no missed ticks (servos stay smooth) and no I²C errors.
 - [ ] **No I²C errors:** no `pcf857x … I2C write failed` lines in the log while outputs switch.
 
 ## 4. One real servo (MG90S)

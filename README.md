@@ -9,7 +9,7 @@ WiFi access point, or over USB serial with FluidNC-style `$` commands.
 - Uses every on-chip PWM block: LEDC high-speed (8), LEDC low-speed (8), MCPWM0 (6), MCPWM1 (6)
 - Optional PCA9685 I²C boards, 16 servos each (up to 4 boards)
 - Up to 64 named digital outputs (lights, relays, …) on free GPIOs or PCF8574/PCF8575
-  port expanders (up to 8 boards), switched by on/off sequences on the same scene clock
+  port expanders (up to 8 boards), switched by sequences of on, off and blinking patterns on the same scene clock
 - Profiles: `const`, `trap` (adjustable acceleration share), `tri`, `sine`, `bell` (minimum jerk)
 - Global Stop/Go via a push button, the web UI or commands; Stop/Go per servo
 - A servo that was stopped blends smoothly back into the running choreography
@@ -151,8 +151,27 @@ Each output has a name and a sequence of switch points within the scene cycle, e
 `$/out/0/seq=0:on,500:off,1200:on,1500:off` (times in ms from the start of the cycle,
 increasing, at most 16 points). Before the first point an output keeps the state of the
 last one, so a sequence wraps around the cycle. Points at or after the end of a fixed
-`$/scene/period_ms` are never reached and have no effect (you get a warning). Outputs
-share the scene clock with the servos:
+`$/scene/period_ms` are never reached and have no effect (you get a warning).
+
+Instead of `on` or `off`, a switch point can start a blinking pattern, which runs until the
+next point: `$/out/0/seq=0:on,2000:blink 200/300,5000:off,6000:flicker`. Values follow the
+name, separated by `/`; values left out take the defaults.
+
+| Pattern | Values (defaults) | Example |
+|---|---|---|
+| `blink` | on ms / off ms (500/500) | `blink 200/300` |
+| `flash` | count / on ms / gap ms / pause ms (2/60/120/800) | `flash 3/40/80/1000`: three flashes, then a pause |
+| `flicker` | on % / slot ms (75/50) | `flicker 85/40`: candle; `flicker 50/120`: faulty neon tube |
+| `heartbeat` | period ms (1000) | `heartbeat 800`: two beats (10 % of the period each), then a pause |
+
+A pattern starts at its switch point and runs on the scene clock, so it repeats identically
+every cycle, stays in sync with the servos, and freezes in place on Stop. The flicker is
+random but the same every cycle (and the same as the web UI's preview); each output
+flickers differently. Outputs change only once per motion tick (20 ms at the default
+`$/scene/update_hz=50`), so you get a warning for shorter pattern times. In the web UI,
+pick the pattern in a switch point's state list and type the values next to it; patterns
+too fine for the strip or timeline show as a pale band. Outputs share the scene clock
+with the servos:
 
 - **Global Stop** holds every output in its current state, and **Go** continues. While
   held, editing a sequence takes effect on Go; Force, Release and per-output Go still act.
@@ -270,7 +289,7 @@ glides its pulse to the new calibration at `max_dps` instead of jumping.
 | `pin` | `none` | `none`, `gpio.N`, `pcf.<board>.<bit>` | R |
 | `enable` | `false` | `true`/`false` | |
 | `invert` | `false` | `true` = low when on | |
-| `seq` | empty | switch points `ms:on\|off,…` | |
+| `seq` | empty | switch points `ms:state,…`; state `on`, `off`, `blink`, `flash`, `flicker`, `heartbeat` (see Digital outputs); at most 199 bytes | |
 | `/button/pin`, `active_low`, `pullup` | `gpio.0`, `true`, `true` | R |
 | `/button/debounce_ms` | 30 | |
 | `$AP/SSID` | empty = `ServoScene-XXXX` | R |

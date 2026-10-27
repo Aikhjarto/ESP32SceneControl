@@ -580,24 +580,111 @@ const outHasHardware = i => !outHw[i] || !/→ none( |$)/.test(outHw[i]);
 const outputLive = i => outputActive(i) && outHasHardware(i);
 const outputName = i => model.get(op(i, 'name')) || `Output ${i}`;
 
-// "0:on,500:off" → [{t: 0, on: true}, {t: 500, on: false}] (mirrors src/core/Sequence.cpp)
+// Blinking patterns and their default parameters, as in src/core/Sequence.cpp.
+const PATTERNS = {
+  blink: { def: [500, 500], hint: 'on/off ms' },
+  flash: { def: [2, 60, 120, 800], hint: 'count/on/gap/pause ms' },
+  flicker: { def: [75, 50], hint: 'on %/slot ms' },
+  heartbeat: { def: [1000], hint: 'period ms' },
+};
+const SEQ_STATES = ['on', 'off', ...Object.keys(PATTERNS)];
+
+// "0:on,500:off,900:blink 100/200" → [{t: 0, s: 'on', p: []}, …, {t: 900, s: 'blink', p: [100, 200]}]
+// (mirrors src/core/Sequence.cpp; the text comes from the device, so it is valid). Points are
+// separated by commas and/or spaces; a number followed by ':' is a point, not a parameter.
 function parseSeq(text) {
-  // Points are separated by commas and/or spaces, as the firmware accepts.
   const rows = [];
-  for (const m of (text || '').matchAll(/(\d+)\s*:\s*([A-Za-z0-9]+)/g)) {
-    rows.push({ t: Number(m[1]), on: /^(on|1|high)$/i.test(m[2]) });
+  const re = /(\d+)\s*:\s*([A-Za-z]+|\d+)(?:(?:\s+|\/)(\d+(?:\/\d+)*)(?![\d/]|\s*:))?/g;
+  for (const m of (text || '').matchAll(re)) {
+    const w = m[2].toLowerCase();
+    const st = /^(on|1|high)$/.test(w) ? 'on' : /^(off|0|low)$/.test(w) ? 'off' : w;
+    rows.push({ t: Number(m[1]), s: st, p: m[3] ? m[3].split('/').map(Number) : [] });
   }
   return rows;
 }
-const seqText = (rows) => rows.map((r) => `${r.t}:${r.on ? 'on' : 'off'}`).join(',');
+const seqText = (rows) => rows.map((r) => `${r.t}:${r.s}${r.p.length ? ' ' + r.p.join('/') : ''}`).join(',');
+const patternParams = (r) => (PATTERNS[r.s] ? PATTERNS[r.s].def.map((d, k) => r.p[k] ?? d) : []);
+
+// Same integer hash as the firmware's flicker, so preview and output match.
+function flickerHash(seed, slot) {
+  let h = (Math.imul(seed, 0x9E3779B1) + Math.imul(slot, 0x85EBCA77)) | 0;
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2C1B3C6D);
+  h ^= h >>> 12;
+  h = Math.imul(h, 0x297A2D39);
+  h ^= h >>> 15;
+  return h >>> 0;
+}
+
+// State of a point's pattern ms after its switch point (patternOn in Sequence.cpp).
+function patternOn(s, p, ms, seed) {
+  switch (s) {
+    case 'on': return true;
+    case 'blink': return ms % (p[0] + p[1]) < p[0];
+    case 'flash': {
+      const step = p[1] + p[2], cycle = p[0] * step - p[2] + p[3];
+      const e = cycle ? ms % cycle : 0;
+      return Math.floor(e / step) < p[0] && e % step < p[1];
+    }
+    case 'flicker': return flickerHash(seed, Math.floor(ms / p[1])) % 100 < p[0];
+    case 'heartbeat': {
+      const e = (ms % p[0]) * 100;
+      return e < 10 * p[0] || (e >= 25 * p[0] && e < 35 * p[0]);
+    }
+    default: return false;
+  }
+}
+
+// Shortest on or off time of a pattern (shortestPatternMs in Sequence.cpp).
+function patternFeatureMs(r) {
+  const p = patternParams(r);
+  switch (r.s) {
+    case 'blink': return Math.min(p[0], p[1]);
+    case 'flash': return Math.min(p[1], p[2], p[3] || Infinity);
+    case 'flicker': return p[1];
+    case 'heartbeat': return p[0] / 10;
+    default: return Infinity;
+  }
+}
+
+// The points reached within the cycle, each with the window it governs: [a, b) in cycle time
+// and the pattern time at a. The first window is the wrap-around from the last point.
+function seqWindows(rows, period) {
+  const reached = rows.filter((r) => !(period > 0) || r.t < period);
+  if (!reached.length) return [];
+  const last = reached.length - 1, end = period > 0 ? period : Infinity;
+  const wins = [];
+  if (reached[0].t > 0) wins.push({ r: reached[last], k: last, a: 0, b: reached[0].t, ms0: period > reached[last].t ? period - reached[last].t : 0 });
+  reached.forEach((r, k) => wins.push({ r, k, a: r.t, b: k < last ? reached[k + 1].t : end, ms0: 0 }));
+  return wins;
+}
 
 // Same as the firmware's sequenceState: points at or after the end of the cycle never count.
-function seqState(rows, tMs, period) {
-  const reached = rows.filter((r) => !(period > 0) || r.t < period);
-  if (!reached.length) return false;
-  let state = reached[reached.length - 1].on;  // wraps around from the end of the previous cycle
-  for (const r of reached) { if (r.t > tMs) break; state = r.on; }
-  return state;
+function seqState(rows, tMs, period, seed = 0) {
+  const w = seqWindows(rows, period).find((x) => tMs >= x.a && tMs < x.b) || null;
+  if (!w) return false;
+  return patternOn(w.r.s, patternParams(w.r), w.ms0 + tMs - w.a, seed * 16 + w.k);
+}
+
+// On-intervals over one cycle for drawing, msPerPx wide pixels: patterns are sampled per
+// pixel; one finer than 2 px is returned as a single "dense" band instead.
+function seqBars(rows, period, seed, msPerPx) {
+  const bars = [];
+  if (!(period > 0) || !(msPerPx > 0)) return bars;
+  for (const w of seqWindows(rows, period)) {
+    if (w.r.s === 'off') continue;
+    if (w.r.s === 'on') { bars.push({ a: w.a, b: w.b }); continue; }
+    if (patternFeatureMs(w.r) < 2 * msPerPx) { bars.push({ a: w.a, b: w.b, dense: true }); continue; }
+    const p = patternParams(w.r);
+    let from = null;
+    for (let t = w.a; t < w.b; t += msPerPx) {
+      const on = patternOn(w.r.s, p, w.ms0 + Math.floor(t - w.a), seed * 16 + w.k);
+      if (on && from === null) from = t;
+      if (!on && from !== null) { bars.push({ a: from, b: t }); from = null; }
+    }
+    if (from !== null) bars.push({ a: from, b: w.b });
+  }
+  return bars;
 }
 
 function renderOutputCards() {
@@ -625,7 +712,7 @@ function buildOutputCard(i) {
     el('div', { class: 'card-head' }, runBtn, name, stateTag, lamp, enable),
     el('div', { class: 'card-head' }, pinTag),
     canvas,
-    el('div', { class: 'seq-row seq-head' }, el('span', {}, 'time ms'), el('span', {}, 'state'), el('span', {})),
+    el('div', { class: 'seq-row seq-head' }, el('span', {}, 'time ms'), el('span', {}, 'state'), el('span', {}, 'pattern'), el('span', {})),
     seqRows,
     el('div', { class: 'row-buttons' }, addPoint,
       el('button', { onclick: test(`$Output/Set=${i},on`), title: 'Force on until released' }, 'Force on'),
@@ -658,7 +745,7 @@ async function saveSeq(i, rows) {
 
 // The editor's rows as they are on screen right now (including unsaved typing).
 function editorRows(card) {
-  return [...card._refs.seqRows.children].map((row) => ({ t: row._t.value.trim(), on: row._s.value === 'on' }));
+  return [...card._refs.seqRows.children].map((row) => ({ t: row._t.value.trim(), s: row._s.value, p: row._p.value.trim() }));
 }
 
 function renderSeqRows(card, i) {
@@ -670,25 +757,45 @@ function renderSeqRows(card, i) {
       renderSeqRows(card, i);
       return;
     }
-    saveSeq(i, next.map((r) => ({ t: Number(r.t), on: r.on })));
+    if (next.some((r) => !/^(\d+(\/\d+)*)?$/.test(r.p))) {
+      toast('Pattern values are whole numbers separated by /, e.g. 100/200', true);
+      renderSeqRows(card, i);
+      return;
+    }
+    saveSeq(i, next.map((r) => ({ t: Number(r.t), s: r.s, p: PATTERNS[r.s] && r.p ? r.p.split('/').map(Number) : [] })));
   };
   card._refs.seqRows.replaceChildren(...rows.map((r) => {
     const t = el('input', { type: 'text', inputmode: 'numeric', value: r.t });
-    const st = el('select', {}, el('option', { value: 'on' }, 'on'), el('option', { value: 'off' }, 'off'));
-    st.value = r.on ? 'on' : 'off';
+    const st = el('select', {}, ...SEQ_STATES.map((n) => el('option', { value: n }, n)));
+    st.value = r.s;
+    const par = el('input', { type: 'text', value: r.p.join('/') });
+    const showPar = () => {
+      const pat = PATTERNS[st.value];
+      par.disabled = !pat;
+      par.placeholder = pat ? pat.def.join('/') : '';
+      par.title = pat ? `${st.value} ${pat.hint}; empty or missing values: ${pat.def.join('/')}` : '';
+      if (!pat) par.value = '';
+    };
+    showPar();
     t.addEventListener('change', () => commit(editorRows(card)));
-    st.addEventListener('change', () => commit(editorRows(card)));
+    st.addEventListener('change', () => {
+      par.value = '';  // a different pattern has different values
+      showPar();
+      commit(editorRows(card));
+    });
+    par.addEventListener('change', () => commit(editorRows(card)));
     const del = el('button', { title: 'Remove this point' }, '✕');
-    const row = el('div', { class: 'seq-row' }, t, st, del);
+    const row = el('div', { class: 'seq-row' }, t, st, par, del);
     del.addEventListener('click', () => commit(editorRows(card).filter((_, j) => j !== [...card._refs.seqRows.children].indexOf(row))));
     row._t = t;
     row._s = st;
+    row._p = par;
     return row;
   }));
   card._refs.addPoint.onclick = () => {
     const next = editorRows(card);
     const last = next.length ? next[next.length - 1] : null;
-    next.push({ t: last && /^\d+$/.test(last.t) ? Number(last.t) + 500 : 0, on: last ? !last.on : true });
+    next.push({ t: last && /^\d+$/.test(last.t) ? Number(last.t) + 500 : 0, s: last && last.s !== 'off' ? 'off' : 'on', p: '' });
     commit(next);
   };
 }
@@ -700,7 +807,8 @@ function updateOutputCard(card, i) {
   card.classList.toggle('disabled', !outputLive(i));
   // Redraw the points when they changed elsewhere, unless someone is typing in them.
   const typing = card._refs.seqRows.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON';
-  if (!typing && seqText(editorRows(card).map((x) => ({ t: x.t, on: x.on }))) !== seqText(parseSeq(model.get(op(i, 'seq'))))) {
+  const shown = editorRows(card).map((x) => ({ t: x.t, s: x.s, p: x.p ? x.p.split('/') : [] }));
+  if (!typing && seqText(shown) !== seqText(parseSeq(model.get(op(i, 'seq'))))) {
     renderSeqRows(card, i);
   }
   updateOutputStatus(card, i);
@@ -737,14 +845,11 @@ function drawStrip(canvas, i, tMs, period) {
   ctx.fillStyle = css.getPropertyValue('--track');
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = css.getPropertyValue('--warn');
-  let on = seqState(rows, 0, period), from = 0;
-  for (const r of rows) {
-    if (r.t >= period) break;
-    if (on && !r.on) ctx.fillRect(x(from), 4, x(r.t) - x(from), h - 8);
-    if (!on && r.on) from = r.t;
-    on = r.on;
+  for (const b of seqBars(rows, period, i, period / w)) {
+    ctx.globalAlpha = b.dense ? 0.45 : 1;  // a pattern too fine for the strip
+    ctx.fillRect(x(b.a), 4, Math.max(1, x(b.b) - x(b.a)), h - 8);
   }
-  if (on) ctx.fillRect(x(from), 4, w - x(from), h - 8);
+  ctx.globalAlpha = 1;
   const c = x(tMs % period);
   ctx.strokeStyle = css.getPropertyValue('--stop');
   ctx.beginPath();
@@ -839,19 +944,13 @@ function renderTimeline() {
     const g = status.ostop.has(i) ? 'stopped' : '';
     add('text', { x: 4, y: y + 15 }, outputName(i).slice(0, W < 600 ? 10 : 16));
     add('rect', { x: label, y: y + 3, width: W - label - 6, height: rowH - 6, class: `track ${g}` });
-    const bar = (t0, t1) => {
+    const bar = (t0, t1, dense) => {
       const a = Math.max(t0, 0), b = Math.min(t1, period);
-      if (b > a) add('rect', { x: sx(a), y: y + 3, width: Math.max(1, sx(b) - sx(a)), height: rowH - 6, rx: 3, class: `on ${g}` });
+      if (b > a) add('rect', { x: sx(a), y: y + 3, width: Math.max(1, sx(b) - sx(a)), height: rowH - 6, rx: dense ? 0 : 3, class: `on ${g} ${dense ? 'dense' : ''}` });
     };
+    // The sequence repeats every scene cycle.
     const rows = parseSeq(model.get(op(i, 'seq')));
-    let on = seqState(rows, 0, period), from = 0;  // the sequence repeats every scene cycle
-    for (const r of rows) {
-      if (r.t >= period) break;
-      if (on && !r.on) bar(from, r.t);
-      if (!on && r.on) from = r.t;
-      on = r.on;
-    }
-    if (on) bar(from, period);
+    for (const b of seqBars(rows, period, i, period / Math.max(1, W - label - 6))) bar(b.a, b.b, b.dense);
   });
   const cursor = add('line', { x1: label, x2: label, y1: top - 4, y2: H, class: 'cursor' });
   host._cursor = { cursor, sx, period, cycle };
