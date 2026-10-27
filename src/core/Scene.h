@@ -12,6 +12,7 @@
 #include <string>
 
 #include "core/Config.h"
+#include "core/Sequence.h"
 
 namespace ss {
 
@@ -62,6 +63,9 @@ public:
     void setOutputPresent(int out, bool present) { outPresent_[out] = present; }
     // Cycle length the scene runs with: as effectivePeriodMs, without items lacking hardware.
     uint32_t effectivePeriod() const;
+    // Call after changing the configuration of digital outputs (the parser does): their
+    // sequences are parsed once per change instead of every tick.
+    void configChanged() { seqDirty_ = true; }
     // "[OUT:0=1,3=0]" for every output with a state
     std::string outputs() const;
 
@@ -84,10 +88,9 @@ private:
         float out = 0;
         float vel = 0;  // output speed over the last tick, deg/s
         float testDeg = 0;
-        float e0 = 0;   // settle: position offset at t0
-        float e1 = 0;   // settle: speed offset at t0, deg/s
+        float from = 0;  // settle: position at t0
+        float e1 = 0;    // settle: speed carried over at t0, deg/s
         float speedDecayS = 0;  // settle: time for the speed offset to decay
-        float lo = 0, hi = 0;   // settle: output range (servo range plus where it started)
         int64_t t0Us = 0;
         int64_t durUs = 0;
     };
@@ -112,6 +115,10 @@ private:
     bool present_[kMaxServos];
     OutputState ost_[kMaxOutputs];
     bool outPresent_[kMaxOutputs];
+    void refreshSequences() const;
+    mutable Sequence seq_[kMaxOutputs];
+    mutable int32_t outLastMs_[kMaxOutputs] = {};
+    mutable bool seqDirty_ = true;
     int64_t tUs_ = 0;
     int64_t outTimeUs_ = 0;  // scene time the current outputs belong to
     int64_t outDtUs_ = 0;    // scene time step that produced them

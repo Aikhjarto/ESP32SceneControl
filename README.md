@@ -143,7 +143,7 @@ Peak speed compared with a constant-speed move: `const` 1×, `trap` 1/(1−a) wh
 
 - **Global Stop** (button, `!`, header button) freezes the scene clock. Every servo holds its position, and **Go** carries on exactly where it stopped.
 - **Per-servo Stop** holds just that servo while the scene keeps running. On **Go** the servo *rejoins*: starting from rest, it blends from where it is onto its still-moving target with smooth (minimum-jerk) curves. The position correction lasts at least `$/scene/rejoin_ms` and is lengthened so it stays under `max_dps`; while the target itself is moving, the servo briefly moves at up to the sum of both speeds. When the blend finishes, the servo is exactly back in sync.
-- **Other rejoins:** the same blend is used after a scene reset, after test mode, after re-enabling a servo (all from rest), and after editing a servo's motion or a change of the scene cycle while running. Those keep the servo's current speed and change it gradually (about 2000 °/s² at most, over at least 0.15 s), so a moving servo neither jumps nor stalls. While settling, a servo never leaves the range between its start and stop angles (or where it started from).
+- **Other rejoins:** the same blend is used after a scene reset, after test mode and after re-enabling a servo (all from rest). Editing a servo's motion or a change of the scene cycle while it moves keeps its current speed: it runs on and turns smoothly toward its new target, braking at up to about 2000 °/s² (harder when needed to stay within its start..stop range), so it neither jumps nor stalls. An edit that doesn't change where the servo is going leaves its motion untouched.
 
 ## Digital outputs
 
@@ -165,7 +165,10 @@ PCF8574 (8 bits) and PCF8575 (16 bits) boards sit on the same I²C bus as the PC
 0x38–0x3F). Their pins are quasi-bidirectional: "high" is only a weak pull-up, so drive
 LEDs or relay inputs **active low** (LED from V+ through a resistor to the pin, `invert=true`).
 Disabled outputs, and all outputs at boot, are "off". Each PCF board is rewritten about once
-a second, so its pins are right again after an ESP restart or a brown-out of the board.
+a second, so its pins are right again after an ESP restart or a brown-out of the board; a
+board that does not answer at boot is looked for again every 5 s and used once it appears.
+An output keeps the wiring it booted with until the next restart: after `$RST=*` or a restore
+that changes its pin or `invert`, "off" stays "off" on the existing hardware.
 GPIO12 is refused for outputs (a load pulling it high at reset stops the ESP32 from booting);
 GPIO 0, 2, 5 and 15 are allowed with a startup warning, as they are boot strapping pins too.
 
@@ -210,7 +213,7 @@ holding just that character.
 | `$Firmware/Update[=url]` | Download and install signed firmware (default `http://<first client>:9999/firmware.bin`; `http://` only); progress as `[OTA:download 40%]` |
 
 Error codes: 2 bad value, 3 unknown command, 4 out of range, 5 unknown setting,
-6 servo not enabled, 7 flash write failed.
+6 servo or output not enabled, 7 flash write failed.
 
 ### Settings
 
@@ -280,7 +283,9 @@ Only settings that differ from their defaults are saved, as `$/path=value` lines
 At boot they are replayed through the same parser, and any line that fails is reported
 by `$I`. `GET /config.txt` downloads this text and `POST /config.txt` restores it
 (Settings → Backup in the UI). A restore starts from the defaults, so the result is exactly
-the backed-up configuration. Press Save afterwards to keep it.
+the backed-up configuration. Press Save afterwards to keep it. Even with every setting changed
+the saved text stays around 50 KB; it lives in a 128 KB NVS partition, which leaves room for
+the old and the new copy while saving.
 
 ## Project layout
 

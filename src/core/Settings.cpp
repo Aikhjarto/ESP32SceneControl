@@ -396,7 +396,12 @@ Err Settings::set(const SettingRef& ref, const std::string& value, std::string& 
             return Err::BadValue;
         case FieldType::Pin: {
             PinSpec pin;
-            if (!parsePin(value, pin)) return msg = "expected none, gpio.N or pca.B.C", Err::BadValue;
+            if (!parsePin(value, pin)) {
+                msg = (f.flags & kGpioOnly) ? "expected none or gpio.N"
+                      : (f.flags & kNoPca) ? "expected none, gpio.N or pcf.B.C"
+                                           : "expected none, gpio.N or pca.B.C";
+                return Err::BadValue;
+            }
             if ((f.flags & kGpioOnly) && pin.type != PinType::Gpio && pin.type != PinType::None) {
                 return msg = "only gpio.N or none", Err::BadValue;
             }

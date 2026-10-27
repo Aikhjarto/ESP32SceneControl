@@ -22,21 +22,13 @@ inline float blendCurve(float u) {
     return u * u * u * (10 + u * (-15 + 6 * u));
 }
 
-// Offset that decays from position e0 and speed e1 to zero, tS seconds after the start: the
-// position part over t0S, the speed part over its own (shorter) t1S, both with zero speed
-// and acceleration at their end (quintic Hermite bases). Keeping t1S short bounds how far
-// a carried-over speed can push the servo before it turns around.
-inline float settleOffset(float e0, float e1, float t0S, float t1S, float tS) {
-    float off = 0;
-    if (t0S > 0 && tS < t0S) {
-        const float u = tS / t0S, u3 = u * u * u;
-        off += e0 * (1 + u3 * (-10 + u * (15 - 6 * u)));  // 1 -> 0
-    }
-    if (t1S > 0 && tS < t1S) {
-        const float u = tS / t1S, u3 = u * u * u;
-        off += e1 * t1S * (u + u3 * (-6 + u * (8 - 3 * u)));  // slope 1 -> 0
-    }
-    return off;
+// How far a servo that was moving at speed v (deg/s) runs on, tS seconds into a settle whose
+// speed part lasts t1S: starts with slope v, ends with zero speed and acceleration (quintic
+// Hermite basis). Peaks at 0.1975 * v * t1S; peak acceleration 3.94 * |v| / t1S.
+inline float speedRunOn(float v, float t1S, float tS) {
+    if (t1S <= 0 || tS >= t1S) return 0;
+    const float u = tS / t1S, u3 = u * u * u;
+    return v * t1S * (u + u3 * (-6 + u * (8 - 3 * u)));
 }
 
 // Time in ms one servo occupies within a scene cycle (delay included); 0 for ping-pong,
@@ -46,8 +38,10 @@ uint32_t servoCycleMs(const ServoConfig& s);
 // Scene cycle length: the configured period or, when periodMs is 0, the longest servo cycle
 // and the last switch point of every digital output rounded up to the next full second.
 // present / outPresent (optional, kMaxServos / kMaxOutputs entries) exclude items without
-// hardware.
-uint32_t effectivePeriodMs(const Config& cfg, const bool* present = nullptr, const bool* outPresent = nullptr);
+// hardware. outLastMs (optional, kMaxOutputs entries, -1 = no points) gives each output's
+// last switch time when the caller already has the sequences parsed.
+uint32_t effectivePeriodMs(const Config& cfg, const bool* present = nullptr, const bool* outPresent = nullptr,
+                           const int32_t* outLastMs = nullptr);
 
 // Target angle of a servo at scene time tUs, a pure function of the scene clock.
 float targetDeg(const ServoConfig& s, int64_t tUs, uint32_t periodMs);

@@ -158,6 +158,7 @@ Err Parser::setting(const std::string& path, const std::string& value, bool hasV
 
 void Parser::afterChange(const SettingRef& ref, ReplySink& out) {
     const bool servoField = ref.group->base == offsetof(Config, servo);
+    scene_.configChanged();
     // The edited servo blends onto its new trajectory. A changed scene period is noticed by
     // the scene itself, which switches return-mode servos over smoothly.
     if ((ref.field->flags & kMotion) && servoField) scene_.rejoin(ref.index);
@@ -179,7 +180,9 @@ void Parser::afterChange(const SettingRef& ref, ReplySink& out) {
 
     const ServoConfig& s = cfg_.servo[ref.index];
     float peak = peakDps(s);
-    if (s.maxDps > 0 && peak > s.maxDps) {
+    if (s.durationMs == 0 && s.startDeg != s.stopDeg) {
+        out.line(fmt("[MSG:WARN: servo %.0f has duration 0 ms: it jumps between its angles]", ref.index));
+    } else if (s.maxDps > 0 && peak > s.maxDps) {
         out.line(fmt("[MSG:WARN: servo %.0f would need %.0f deg/s, max_dps is %.0f]", ref.index, peak, s.maxDps));
     }
     uint32_t period = cfg_.scene.periodMs;
@@ -274,6 +277,7 @@ bool Parser::restore(const std::string& text, ReplySink& out) {
         if ((r.field->flags & kReboot) && !target.equals(r, booted)) needsRestart = true;
     });
     cfg_ = *next;
+    scene_.configChanged();
     scene_.rejoin(-1);
     out.line("[MSG:INFO: Config restored (" + std::to_string(applied) + " settings)]");
     if (needsRestart) out.line("[MSG:INFO: Restart required to apply the restored config]");
@@ -349,6 +353,7 @@ Err Parser::command(const std::string& name, const std::string& value, bool hasV
         {
             Guard g(host_);
             setDefaults(cfg_);
+            scene_.configChanged();
             // Forget per-item states too: stopped/tested servos and stopped/forced outputs.
             scene_.setServoRun(-1, true);
             scene_.release(-1);

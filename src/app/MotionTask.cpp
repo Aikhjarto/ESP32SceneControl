@@ -107,7 +107,7 @@ static void motionTask(void*) {
             for (int o = 0; o < kMaxOutputs; ++o) {
                 // Inactive (disabled) outputs go to their "off" level.
                 const bool on = sc.hasOutputState(o) && sc.outputOn(o);
-                gOutLevel[o] = on != config().out[o].invert;
+                gOutLevel[o] = outputs().levelFor(o, on, config().out[o]);
             }
         }
 

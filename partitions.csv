@@ -1,7 +1,8 @@
-# 4 MB flash. Larger NVS (stores the config text), two OTA slots for later web updates.
+# 4 MB flash. 128 KB NVS: the saved config (all non-default settings as text) can reach
+# ~50 KB, and NVS needs room for the old and the new copy while saving. Two OTA slots.
 # Name,   Type, SubType, Offset,   Size
-nvs,      data, nvs,     0x9000,   0x10000
-otadata,  data, ota,     0x19000,  0x2000
-phy_init, data, phy,     0x1B000,  0x1000
-ota_0,    app,  ota_0,   0x20000,  0x1E0000
-ota_1,    app,  ota_1,   0x200000, 0x1E0000
+nvs,      data, nvs,     0x9000,   0x20000
+otadata,  data, ota,     0x29000,  0x2000
+phy_init, data, phy,     0x2B000,  0x1000
+ota_0,    app,  ota_0,   0x30000,  0x1E0000
+ota_1,    app,  ota_1,   0x210000, 0x1E0000

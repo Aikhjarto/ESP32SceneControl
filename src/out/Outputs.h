@@ -43,6 +43,13 @@ public:
     // Digital outputs (called from the motion task only).
     const DigitalChannel& digital(int out) const { return dmap_[out]; }
     void setDigital(int out, bool high);  // written only when the level changes
+    // Level for "on": the output's pin is fixed until a restart, and so is its wiring. If the
+    // live config still names that pin its invert setting applies, otherwise (e.g. after
+    // $RST=* or a restore) the one from boot - so "off" never turns into "on".
+    bool levelFor(int out, bool on, const OutputConfig& live) const {
+        const bool invert = live.pin == bootPin_[out] ? live.invert : bootInvert_[out];
+        return on != invert;
+    }
     std::string describeOutput(int out) const;  // e.g. "gpio.12", "pcf0.5"
     bool pcfFound(int board) const { return pcf_[board].ok(); }
 
@@ -85,6 +92,8 @@ private:
     Pcf857x pcf_[kMaxPcf];
     DigitalChannel dmap_[kMaxOutputs];
     int8_t level_[kMaxOutputs];  // last written level, -1 = not yet written
+    PinSpec bootPin_[kMaxOutputs] = {};
+    bool bootInvert_[kMaxOutputs] = {};
 };
 
 }  // namespace ss

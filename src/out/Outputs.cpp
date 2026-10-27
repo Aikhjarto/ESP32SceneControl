@@ -71,6 +71,8 @@ void Outputs::begin(const Config& cfg, std::string& log) {
     }
     for (int o = 0; o < kMaxOutputs; ++o) {
         level_[o] = -1;
+        bootPin_[o] = cfg.out[o].pin;
+        bootInvert_[o] = cfg.out[o].invert;
         if (cfg.out[o].pin.type != PinType::None) allocateOutput(cfg, o, log);
     }
     initLedc(cfg);
@@ -249,7 +251,8 @@ bool Outputs::allocateOutput(const Config& cfg, int out, std::string& log) {
                    pin.board, pin.num, pin.board, pin.board);
             return false;
         }
-        if (!pcf_[pin.board].ok()) return false;  // missing board already reported by initI2c
+        // A board that was not found is still used: it is probed again and driven once it answers.
+        if (!pcf_[pin.board].configured()) return false;  // address conflict, reported by initI2c
         if (pin.num >= pcf_[pin.board].bits()) {
             addLog(log, "output %d: PCF board %u has only %d bits", out, pin.board, pcf_[pin.board].bits());
             return false;
@@ -265,15 +268,6 @@ bool Outputs::allocateOutput(const Config& cfg, int out, std::string& log) {
         addLog(log, "output %d: gpio.%d cannot be used as an output", out, gpio);
         return false;
     }
-    // Boot strapping pins: a load pulling GPIO12 high at reset selects 1.8 V flash and the
-    // module does not boot; on 0, 2, 5 and 15 a pulling load changes the boot mode or log.
-    if (gpio == 12) {
-        addLog(log, "output %d: gpio.12 is a boot strapping pin (flash voltage), use another pin", out);
-        return false;
-    }
-    if (gpio == 0 || gpio == 2 || gpio == 5 || gpio == 15) {
-        addLog(log, "output %d: gpio.%d is a boot strapping pin; its load must not pull it at reset", out, gpio);
-    }
     if ((i2cUsed(cfg) && (pin == cfg.i2c.sda || pin == cfg.i2c.scl)) || pin == cfg.button.pin) {
         addLog(log, "output %d: gpio.%d is used by I2C or the button", out, gpio);
         return false;
@@ -284,15 +278,26 @@ bool Outputs::allocateOutput(const Config& cfg, int out, std::string& log) {
             return false;
         }
     }
+    // Boot strapping pins: a load pulling GPIO12 high at reset selects 1.8 V flash and the
+    // module does not boot; on 0, 2, 5 and 15 a pulling load changes the boot mode or log.
+    if (gpio == 12) {
+        addLog(log, "output %d: gpio.12 is a boot strapping pin (flash voltage), use another pin", out);
+        return false;
+    }
+    if (gpio == 0 || gpio == 2 || gpio == 5 || gpio == 15) {
+        addLog(log, "output %d: gpio.%d is a boot strapping pin; its load must not pull it at reset", out, gpio);
+    }
+    // Set the "off" level before the pin becomes an output, so it never pulses "on" at boot.
+    dmap_[out] = {DigitalChannel::Kind::Gpio, 0, static_cast<uint8_t>(gpio)};
+    setDigital(out, cfg.out[out].invert);
     gpio_config_t io = {};
     io.pin_bit_mask = 1ULL << gpio;
     io.mode = GPIO_MODE_OUTPUT;
     if (gpio_config(&io) != ESP_OK) {
         addLog(log, "output %d: gpio.%d configuration failed", out, gpio);
+        dmap_[out] = {};
         return false;
     }
-    dmap_[out] = {DigitalChannel::Kind::Gpio, 0, static_cast<uint8_t>(gpio)};
-    setDigital(out, cfg.out[out].invert);  // "off" until the scene says otherwise
     return true;
 }
 
@@ -365,7 +370,8 @@ void Outputs::initI2c(const Config& cfg, std::string& log) {
         const PcfConfig& p = cfg.pcf[b];
         if (!p.enable || !claim("PCF", b, p.addr)) continue;
         if (!pcf_[b].begin(i2c_, static_cast<uint8_t>(p.addr), sclHz, p.type == PcfType::Pcf8575)) {
-            addLog(log, "PCF board %d not found at 0x%02lX", b, static_cast<unsigned long>(p.addr));
+            addLog(log, "PCF board %d not found at 0x%02lX (looked for again every 5 s)", b,
+                   static_cast<unsigned long>(p.addr));
         }
     }
 }

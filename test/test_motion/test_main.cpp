@@ -357,6 +357,39 @@ void test_reenable_starts_from_rest() {
     TEST_ASSERT_TRUE(std::fabs(sc.output(0) - a) < 1.0f);  // from rest, no old speed carried over
 }
 
+// Fifth review: an edit while a servo moves fast must not stop it dead (the earlier hard
+// range clamp held it still for up to 0.34 s).
+static int longestHoldAfterEdit(void (*edit)(ServoConfig&), float& lo, float& hi) {
+    cfg.servo[0].startDeg = 45;
+    cfg.servo[0].stopDeg = 135;
+    cfg.servo[0].durationMs = 300;
+    Scene sc(cfg);
+    sc.setRunning(true);
+    for (int k = 0; k < 6; ++k) sc.tick(20000);  // moving up at ~480 deg/s
+    edit(cfg.servo[0]);
+    sc.rejoin(0);
+    int hold = 0, longest = 0;
+    float prev = sc.output(0);
+    lo = 1e9f, hi = -1e9f;
+    for (int k = 0; k < 40; ++k) {
+        sc.tick(20000);
+        hold = (std::fabs(sc.output(0) - prev) < 0.02f && sc.rejoining(0)) ? hold + 1 : 0;
+        longest = hold > longest ? hold : longest;
+        lo = std::fmin(lo, sc.output(0));
+        hi = std::fmax(hi, sc.output(0));
+        prev = sc.output(0);
+    }
+    return longest;
+}
+
+void test_edit_while_moving_does_not_stall() {
+    float lo, hi;
+    TEST_ASSERT_TRUE(longestHoldAfterEdit([](ServoConfig& s) { s.stopDeg = 50; }, lo, hi) <= 1);
+    TEST_ASSERT_TRUE(hi < 85);  // runs on a little past where it was (~74 deg), then turns
+    TEST_ASSERT_TRUE(longestHoldAfterEdit([](ServoConfig& s) { s.durationMs = 3000; }, lo, hi) <= 1);
+    TEST_ASSERT_TRUE(lo >= 45 - 1e-3f && hi <= 135 + 1e-3f);
+}
+
 void test_servos_without_hardware_do_not_set_the_period() {
     cfg.scene.periodMs = 0;
     cfg.servo[1].enable = true;
@@ -403,6 +436,7 @@ int main() {
     RUN_TEST(test_release_while_slewing_does_not_run_on);
     RUN_TEST(test_long_rejoin_and_period_change_stay_in_range);
     RUN_TEST(test_reenable_starts_from_rest);
+    RUN_TEST(test_edit_while_moving_does_not_stall);
     RUN_TEST(test_servos_without_hardware_do_not_set_the_period);
     RUN_TEST(test_status_lists_states);
     return UNITY_END();

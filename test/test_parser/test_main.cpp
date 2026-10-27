@@ -110,6 +110,12 @@ void test_reboot_settings_say_so() {
     TEST_ASSERT_EQUAL_STRING("ok", c.last().c_str());
 }
 
+void test_zero_duration_warns_without_inf() {
+    Capture c = exec("$/servo/0/duration_ms=0");
+    TEST_ASSERT_TRUE(c.hasPrefix("[MSG:WARN: servo 0 has duration 0 ms"));
+    for (const auto& l : c.lines) TEST_ASSERT_TRUE(l.find("inf") == std::string::npos);
+}
+
 void test_speed_warning() {
     Capture c = exec("$/servo/0/duration_ms=100");  // 90 deg in 0.1 s with bell → 1687 deg/s
     TEST_ASSERT_TRUE(c.hasPrefix("[MSG:WARN: servo 0 would need"));
@@ -327,6 +333,7 @@ int main() {
     RUN_TEST(test_pins_and_enums_roundtrip);
     RUN_TEST(test_reboot_settings_say_so);
     RUN_TEST(test_speed_warning);
+    RUN_TEST(test_zero_duration_warns_without_inf);
     RUN_TEST(test_named_settings_and_secret_masking);
     RUN_TEST(test_subtree_listing);
     RUN_TEST(test_save_writes_only_changes_and_replay_restores);

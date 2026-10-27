@@ -171,7 +171,10 @@ void test_output_without_hardware_is_ignored() {
 }
 
 void test_pin_rules_and_settings() {
-    TEST_ASSERT_EQUAL_STRING("error:2", exec("$/out/0/pin=pca.0.1").last().c_str());
+    Capture bad = exec("$/out/0/pin=pca.0.1");
+    TEST_ASSERT_EQUAL_STRING("error:2", bad.last().c_str());
+    TEST_ASSERT_EQUAL_STRING("error:2", exec("$/out/0/pin=pcx.0.1").last().c_str());
+    TEST_ASSERT_TRUE(exec("$/out/0/pin=pcx.0.1").hasPrefix("[MSG:ERR: expected none, gpio.N or pcf.B.C"));
     TEST_ASSERT_EQUAL_STRING("ok", exec("$/out/0/pin=pcf.7.15").last().c_str());
     TEST_ASSERT_EQUAL_STRING("$/out/0/pin=pcf.7.15", exec("$/out/0/pin").lines[0].c_str());
     TEST_ASSERT_EQUAL_STRING("error:2", exec("$/servo/0/pin=pcf.0.1").last().c_str());

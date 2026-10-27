@@ -104,6 +104,13 @@ function effectivePeriod() {
   if (p > 0) return p;
   let longest = 0;
   for (const i of servoIndices()) if (servoLive(i)) longest = Math.max(longest, servoCycle(servoParams(i)));
+  // As in the firmware (src/core/Motion.cpp): each live output's last switch point, rounded
+  // up to the next full second.
+  for (const i of outputIndices()) {
+    if (!outputLive(i)) continue;
+    const rows = parseSeq(model.get(op(i, 'seq')));
+    if (rows.length) longest = Math.max(longest, (Math.floor(rows[rows.length - 1].t / 1000) + 1) * 1000);
+  }
   return Math.max(longest, 100);
 }
 
@@ -637,10 +644,13 @@ async function saveSeq(i, rows) {
   rows.sort((a, b) => a.t - b.t);
   await setSetting(op(i, 'seq'), seqText(rows));
   const card = document.querySelector(`.card[data-output="${i}"]`);
-  if (card) {
-    renderSeqRows(card, i);
-    updateOutputCard(card, i);
-  }
+  if (!card) return;
+  // Redraw from the device's answer, unless the user is already typing in another row:
+  // that row is saved on its own change event, which redraws then.
+  const a = document.activeElement;
+  const typing = card._refs.seqRows.contains(a) && a.tagName !== 'BUTTON';
+  if (!typing) renderSeqRows(card, i);
+  updateOutputCard(card, i);
 }
 
 // The editor's rows as they are on screen right now (including unsaved typing).

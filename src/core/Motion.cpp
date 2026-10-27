@@ -65,7 +65,8 @@ uint32_t servoCycleMs(const ServoConfig& s) {
     }
 }
 
-uint32_t effectivePeriodMs(const Config& cfg, const bool* present, const bool* outPresent) {
+uint32_t effectivePeriodMs(const Config& cfg, const bool* present, const bool* outPresent,
+                           const int32_t* outLastMs) {
     if (cfg.scene.periodMs > 0) return cfg.scene.periodMs;
     uint32_t longest = 0;
     for (int i = 0; i < kMaxServos; ++i) {
@@ -76,11 +77,15 @@ uint32_t effectivePeriodMs(const Config& cfg, const bool* present, const bool* o
     // last state to show: rounded up to the next full second.
     for (int o = 0; o < kMaxOutputs; ++o) {
         if (!outputActive(cfg.out[o]) || (outPresent && !outPresent[o])) continue;
-        Sequence seq;
-        std::string err;
-        if (parseSequence(cfg.out[o].seq, seq, err) && seq.count > 0) {
-            longest = std::max(longest, (seq.timeMs[seq.count - 1] / 1000 + 1) * 1000);
+        int32_t last = -1;
+        if (outLastMs) {
+            last = outLastMs[o];
+        } else {
+            Sequence seq;
+            std::string err;
+            if (parseSequence(cfg.out[o].seq, seq, err) && seq.count > 0) last = static_cast<int32_t>(seq.timeMs[seq.count - 1]);
         }
+        if (last >= 0) longest = std::max(longest, (static_cast<uint32_t>(last) / 1000 + 1) * 1000);
     }
     return std::max<uint32_t>(longest, 100);
 }

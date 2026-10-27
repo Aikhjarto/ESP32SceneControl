@@ -10,11 +10,16 @@
 namespace ss {
 
 static constexpr int64_t kMaxRejoinUs = 10'000'000;
-// A carried-over speed difference decays at no more than about this acceleration (deg/s^2;
-// 0 -> 600 deg/s in 0.3 s), but over at least kMinSpeedDecayS. Peak acceleration of the
-// speed term is 3.94 * |e1| / decay time (maximum of the Hermite basis' second derivative).
+// A settle that keeps the servo's speed v lets it run on (speedRunOn) for T1 seconds: peak
+// run-on 0.1975 * |v| * T1, peak acceleration 3.94 * |v| / T1. T1 is chosen for at most
+// kSettleAccel (deg/s^2), at least kMinSpeedDecayS, and shorter when needed so the run-on
+// stays inside the servo's start..stop range - never shorter than kShortestSpeedDecayS
+// (then it decelerates harder and may run on a few degrees).
 static constexpr float kSettleAccel = 2000.0f;
 static constexpr float kMinSpeedDecayS = 0.15f;
+static constexpr float kShortestSpeedDecayS = 0.05f;
+static constexpr float kRunOnFactor = 0.1975f;  // peak of the speed-term basis
+static constexpr float kAccelFactor = 3.94f;    // peak |second derivative| of that basis
 
 void Scene::tick(int64_t dtUs) {
     const int64_t sceneDtUs = running_ ? dtUs : 0;
@@ -60,9 +65,10 @@ void Scene::tick(int64_t dtUs) {
                 st.rejoining = false;
                 st.out = tgt;
             } else {
-                // Never beyond the servo's own range of motion (or where it started from).
-                const float off = settleOffset(st.e0, st.e1, st.durUs / 1e6f, st.speedDecayS, tS);
-                st.out = std::clamp(tgt + off, st.lo, st.hi);
+                // Blend from where the servo was to its moving target (stays between the two,
+                // so inside the range), plus the run-on of the speed it had.
+                st.out = st.from + (tgt - st.from) * blendCurve(tS * 1e6f / st.durUs) +
+                         speedRunOn(st.e1, st.speedDecayS, tS);
             }
         } else {
             st.out = tgt;
@@ -81,10 +87,7 @@ void Scene::tick(int64_t dtUs) {
         } else if (!os.stopped && (running_ || os.refresh || !wasActive)) {
             // While the scene is held, outputs keep their state; only Release, per-output Go
             // and newly enabled outputs take the (frozen) scene's state once.
-            Sequence seq;  // parsed each tick (only wired outputs): never stale after an edit
-            std::string err;
-            parseSequence(cfg_.out[o].seq, seq, err);
-            os.on = sequenceState(seq, inCycleMs);
+            os.on = sequenceState(seq_[o], inCycleMs);
         }
         os.refresh = false;
     }
@@ -99,7 +102,21 @@ int64_t Scene::blendDurationUs(const ServoConfig& s, float distDeg) const {
     return std::min(durUs, kMaxRejoinUs);
 }
 
-uint32_t Scene::effectivePeriod() const { return effectivePeriodMs(cfg_, present_, outPresent_); }
+uint32_t Scene::effectivePeriod() const {
+    refreshSequences();
+    return effectivePeriodMs(cfg_, present_, outPresent_, outLastMs_);
+}
+
+// Sequences are parsed once per configuration change, not every tick.
+void Scene::refreshSequences() const {
+    if (!seqDirty_) return;
+    for (int o = 0; o < kMaxOutputs; ++o) {
+        std::string err;
+        if (!parseSequence(cfg_.out[o].seq, seq_[o], err)) seq_[o] = Sequence();
+        outLastMs_[o] = seq_[o].count ? static_cast<int32_t>(seq_[o].timeMs[seq_[o].count - 1]) : -1;
+    }
+    seqDirty_ = false;
+}
 
 // Target speed at scene time t, measured over the same interval as the output speed, so
 // that a servo exactly on its target has no speed difference to settle.
@@ -110,23 +127,36 @@ float Scene::targetVelocity(const ServoConfig& s, int64_t tUs) const {
     return (targetDeg(s, t1, period) - targetDeg(s, t1 - h, period)) * 1e6f / h;
 }
 
-// Settle onto the target from wherever the servo is: the output becomes target + offset, and
-// the offset (position and speed difference at the start) decays to zero with zero speed and
-// acceleration at the end. keepSpeed continues the servo's current motion (edits and
-// scene-period changes, also mid-settle); otherwise it starts from rest (Go, Release,
-// reset, re-enabling). Used for every transition, so nothing ever jumps.
+// Settle onto the target from wherever the servo is: a minimum-jerk blend from the current
+// position to the moving target, which starts from rest and ends exactly on the target with
+// its speed. keepSpeed (edits, scene-period changes, also mid-settle) adds the run-on of the
+// servo's current speed, so a moving servo neither jumps nor stalls; without it (Go,
+// Release, reset, re-enabling) the servo starts from rest. A servo already on its new
+// trajectory at the right speed needs no settle at all. Used for every transition.
 void Scene::startRejoin(int servo, bool keepSpeed) {
     ServoState& st = st_[servo];
     if (!st.valid || st.stopped || st.testing) return;
     const ServoConfig& s = cfg_.servo[servo];
     const uint32_t period = periodMs_ ? periodMs_ : effectivePeriod();
     // Anchor at the time the current output belongs to.
-    st.e0 = st.out - targetDeg(s, outTimeUs_, period);
-    st.e1 = (keepSpeed && running_ ? st.vel : 0) - targetVelocity(s, outTimeUs_);
-    st.durUs = blendDurationUs(s, std::fabs(st.e0));
-    st.speedDecayS = std::min(std::max(kMinSpeedDecayS, 3.94f * std::fabs(st.e1) / kSettleAccel), st.durUs / 1e6f);
-    st.lo = std::min({s.startDeg, s.stopDeg, st.out});
-    st.hi = std::max({s.startDeg, s.stopDeg, st.out});
+    const float tgt0 = targetDeg(s, outTimeUs_, period);
+    const float vel = keepSpeed && running_ ? st.vel : 0;
+    if (keepSpeed && std::fabs(st.out - tgt0) < 0.05f && std::fabs(vel - targetVelocity(s, outTimeUs_)) < 2.0f) {
+        st.rejoining = false;  // e.g. an edit that does not change where the servo is going now
+        return;
+    }
+    st.from = st.out;
+    st.e1 = vel;
+    // Speed part: gentle enough for kSettleAccel, short enough not to run out of the range.
+    float t1 = std::max(kMinSpeedDecayS, kAccelFactor * std::fabs(st.e1) / kSettleAccel);
+    if (st.e1 != 0) {
+        const float lo = std::min(s.startDeg, s.stopDeg), hi = std::max(s.startDeg, s.stopDeg);
+        const float room = std::max(0.0f, st.e1 > 0 ? hi - st.out : st.out - lo);
+        t1 = std::min(t1, std::max(kShortestSpeedDecayS, room / (kRunOnFactor * std::fabs(st.e1))));
+    }
+    st.speedDecayS = t1;
+    // The whole settle lasts at least as long as its speed part.
+    st.durUs = std::max(blendDurationUs(s, std::fabs(st.out - tgt0)), static_cast<int64_t>(t1 * 1e6f));
     st.t0Us = outTimeUs_;
     st.rejoining = true;
 }
