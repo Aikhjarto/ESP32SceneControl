@@ -23,6 +23,8 @@ Each item says what to do and what result to expect.
 ## 1. First flash over serial and boot
 
 - [ ] Run `pio run -t upload -t monitor`. It flashes the bootloader (with rollback), the partition table and the app.
+  If the board ever ran a build older than commit 049fa04, run `pio run -t erase` first: that commit changed
+  the partition layout (NVS 128 KB, apps at 0x30000), which only a serial flash can change, never OTA.
 - [ ] **Boot log:**
   - [ ] `ESP-IDF v6.1.0` is shown
   - [ ] no panic and no reboot loop
