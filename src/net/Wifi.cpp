@@ -63,7 +63,7 @@ void startAccessPoint(const NetConfig& cfg) {
         uint8_t mac[6];
         esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
         char buf[24];
-        snprintf(buf, sizeof(buf), "ServoScene-%02X%02X", mac[4], mac[5]);
+        snprintf(buf, sizeof(buf), "SceneControl-%02X%02X", mac[4], mac[5]);
         gSsid = buf;
     }
 

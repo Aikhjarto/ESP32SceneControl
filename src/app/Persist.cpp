@@ -5,7 +5,7 @@
 
 namespace ss::app::persist {
 
-static const char* kNamespace = "servoscene";
+static const char* kNamespace = "servoscene";  // kept from before the rename: saved settings stay
 static const char* kKey = "config";
 
 bool load(std::string& text) {

@@ -90,7 +90,7 @@ struct ButtonConfig {
 };
 
 struct NetConfig {
-    char ssid[33];  // empty = "ServoScene-XXXX" from the MAC address
+    char ssid[33];  // empty = "SceneControl-XXXX" from the MAC address
     char password[65];
     uint32_t channel;
     char ip[16];

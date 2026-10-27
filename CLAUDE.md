@@ -8,8 +8,9 @@ this file holds the decisions, rules and state a new session needs to continue t
 The project is called **ESP32SceneControl** (renamed from ESP32PWM on 2026-10-27; the
 checkout folder may still have the old name). The OTA update refuses images whose ESP-IDF
 project name differs from the running one, so a board that runs a build from before the
-rename needs one serial flash. The default AP name `ServoScene-XXXX`, hostname and
-password `servoscene` were not part of the rename.
+rename needs one serial flash. The WiFi defaults followed: AP `SceneControl-XXXX`, hostname
+and password `scenecontrol`. Only the internal NVS namespace stays `servoscene`, so saved
+settings survive.
 
 ## Working rules (from the user)
 

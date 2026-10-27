@@ -104,7 +104,7 @@ Your firewall must allow incoming TCP on port 9999 (e.g. `sudo firewall-cmd --ad
 
 ## First use
 
-1. Power up and join the WiFi network **ServoScene-XXXX**. The password is `servoscene`.
+1. Power up and join the WiFi network **SceneControl-XXXX**. The password is `scenecontrol`.
 2. Most phones open the UI by themselves (captive portal). Otherwise browse to <http://192.168.4.1/>.
 3. Change a value and the servo reacts at once. Press **Save** to keep your changes over a restart.
    If a change needs a restart (pins, frequencies, WiFi), a banner offers **Save & restart**.
@@ -282,9 +282,9 @@ glides its pulse to the new calibration at `max_dps` instead of jumping.
 | `/pcf/<0..7>/enable`, `type`, `addr` | off, `pcf8574`, 0x20 + board | R |
 | `/button/pin`, `active_low`, `pullup` | `gpio.0`, `true`, `true` | R |
 | `/button/debounce_ms` | 30 | |
-| `$AP/SSID` | empty = `ServoScene-XXXX` | R |
-| `$AP/Password` | `servoscene` (empty = open network, else 8–63 characters) | R |
-| `$AP/Channel`, `$AP/IP`, `$AP/Captive`, `$Hostname` | 6, `192.168.4.1`, `true`, `servoscene` | R |
+| `$AP/SSID` | empty = `SceneControl-XXXX` | R |
+| `$AP/Password` | `scenecontrol` (empty = open network, else 8–63 characters) | R |
+| `$AP/Channel`, `$AP/IP`, `$AP/Captive`, `$Hostname` | 6, `192.168.4.1`, `true`, `scenecontrol` | R |
 
 **`/out/<0..63>/…`** (digital outputs)
 

@@ -23,7 +23,7 @@ REALTIME = "!~?\x18"
 
 def build_sim():
     BUILD.mkdir(parents=True, exist_ok=True)
-    exe = BUILD / "servoscene-sim"
+    exe = BUILD / "scenecontrol-sim"
     sources = [ROOT / "tools/sim/main.cpp", *sorted((ROOT / "src/core").glob("*.cpp"))]
     if not exe.exists() or any(s.stat().st_mtime > exe.stat().st_mtime for s in sources):
         print("building simulator ...")

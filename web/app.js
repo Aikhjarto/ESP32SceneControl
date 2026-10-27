@@ -1,5 +1,5 @@
 'use strict';
-// ServoScene web UI. Talks to the ESP exclusively through the WebSocket command
+// SceneControl web UI. Talks to the ESP exclusively through the WebSocket command
 // protocol (the same FluidNC-style commands as the serial port).
 
 const PROFILES = ['const', 'trap', 'tri', 'sine', 'bell'];
@@ -395,7 +395,7 @@ function inputFor(path, name) {
 function genericField(path, label) {
   const name = path.split('/').pop();
   const input = inputFor(path, name);
-  if (path === 'AP/SSID') input.placeholder = 'auto (ServoScene-XXXX)';
+  if (path === 'AP/SSID') input.placeholder = 'auto (SceneControl-XXXX)';
   return field(label || name.replace(/_/g, ' '), input, input.type === 'checkbox' ? 'check' : '');
 }
 

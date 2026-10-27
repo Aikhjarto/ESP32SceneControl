@@ -51,10 +51,10 @@ void setDefaults(Config& cfg) {
     cfg.button = {pinGpio(0), true, true, 30};  // BOOT button on DevKit boards
 
     NetConfig& n = cfg.net;
-    std::strcpy(n.password, "servoscene");
+    std::strcpy(n.password, "scenecontrol");
     n.channel = 6;
     std::strcpy(n.ip, "192.168.4.1");
-    std::strcpy(n.hostname, "servoscene");
+    std::strcpy(n.hostname, "scenecontrol");
     n.captive = true;
 }
 

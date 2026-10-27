@@ -29,7 +29,7 @@ Each item says what to do and what result to expect.
   - [ ] `ESP-IDF v6.1.0` is shown
   - [ ] no panic and no reboot loop
   - [ ] the `allocated: LEDC-HS …, LEDC-LS …, MCPWM0 …, MCPWM1 …` counts add up to 16 GPIO servos
-  - [ ] `access point "ServoScene-XXXX"` appears
+  - [ ] `access point "SceneControl-XXXX"` appears
   - [ ] `web server on http://192.168.4.1/` appears
 - [ ] **`$I` output:**
   - [ ] `[VER:0.1.0 ESP32SceneControl]`
@@ -130,7 +130,7 @@ Measure **one servo per block** (servos 0–3 by default). The MCPWM clock setup
 
 ## 8. WiFi and web UI
 
-- [ ] **Joining:** join `ServoScene-XXXX` with the password `servoscene`.
+- [ ] **Joining:** join `SceneControl-XXXX` with the password `scenecontrol`.
   - [ ] Android shows the captive-portal page by itself.
   - [ ] iPhone shows the captive-portal page by itself.
   - [ ] The laptop reaches http://192.168.4.1/.

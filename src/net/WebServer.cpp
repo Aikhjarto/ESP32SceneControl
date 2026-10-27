@@ -257,7 +257,7 @@ static esp_err_t configGet(httpd_req_t* req) {
         text = app::parser().settings().dumpChanged();
     }
     httpd_resp_set_type(req, "text/plain");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"servoscene-config.txt\"");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"scenecontrol-config.txt\"");
     return httpd_resp_send(req, text.data(), text.size());
 }
 
