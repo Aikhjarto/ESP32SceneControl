@@ -37,7 +37,7 @@
                     "regexp": "^__never_matches__$"
                 },
                 "background": {
-                    "activatesOnStart": true,
+                    "activeBegin": true,
                     "beginsPattern": "^Firmware:|^Warning:",
                     "endsPattern": "^Serving on port"
                 }
@@ -64,7 +64,7 @@
                     "regexp": "^__never_matches__$"
                 },
                 "background": {
-                    "activatesOnStart": true,
+                    "activeBegin": true,
                     "beginsPattern": "^building simulator|^======== Running",
                     "endsPattern": "^======== Running on"
                 }
