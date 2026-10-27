@@ -63,6 +63,7 @@ public:
 private:
     bool valid_ = false;
     float offsetUs_ = 0;  // old calibration's pulse minus the new one, decays to 0
+    float usPerDeg_ = 0;  // glide rate per deg/s, fixed when the calibration changes
     ServoConfig cal_{};   // calibration the offset refers to
 };
 

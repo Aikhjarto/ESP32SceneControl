@@ -247,7 +247,7 @@ Paths are case-insensitive. "R" means the change applies after a restart (`$Bye`
 
 | Field | Default | Range / values | |
 |---|---|---|---|
-| `name` | empty | up to 15 characters | |
+| `name` | empty | up to 15 bytes of UTF-8 (ä, € etc. take 2–3) | |
 | `pin` | see Hardware | `none`, `gpio.N`, `pca.<board>.<channel>` | R |
 | `driver` | `auto` | `auto`, `ledc`, `mcpwm` (on-chip block for GPIO servos) | R |
 | `enable` | `true` | `true`/`false` | |
@@ -280,21 +280,21 @@ glides its pulse to the new calibration at `max_dps` instead of jumping.
 | `/i2c/sda`, `/i2c/scl`, `/i2c/khz` | `gpio.21`, `gpio.22`, 400 | R |
 | `/pca/<0..3>/enable`, `addr`, `freq_hz`, `osc_hz` | board 0 on at 0x40, 50 Hz, 25000000 | R |
 | `/pcf/<0..7>/enable`, `type`, `addr` | off, `pcf8574`, 0x20 + board | R |
-
-**`/out/<0..63>/…`** (digital outputs)
-
-| Field | Default | Range / values | |
-|---|---|---|---|
-| `name` | empty | up to 15 characters | |
-| `pin` | `none` | `none`, `gpio.N`, `pcf.<board>.<bit>` | R |
-| `enable` | `false` | `true`/`false` | |
-| `invert` | `false` | `true` = low when on | |
-| `seq` | empty | switch points `ms:state,…`; state `on`, `off`, `blink`, `flash`, `flicker`, `heartbeat` (see Digital outputs); at most 199 bytes | |
 | `/button/pin`, `active_low`, `pullup` | `gpio.0`, `true`, `true` | R |
 | `/button/debounce_ms` | 30 | |
 | `$AP/SSID` | empty = `ServoScene-XXXX` | R |
 | `$AP/Password` | `servoscene` (empty = open network, else 8–63 characters) | R |
 | `$AP/Channel`, `$AP/IP`, `$AP/Captive`, `$Hostname` | 6, `192.168.4.1`, `true`, `servoscene` | R |
+
+**`/out/<0..63>/…`** (digital outputs)
+
+| Field | Default | Range / values | |
+|---|---|---|---|
+| `name` | empty | up to 15 bytes of UTF-8 (ä, € etc. take 2–3) | |
+| `pin` | `none` | `none`, `gpio.N`, `pcf.<board>.<bit>` | R |
+| `enable` | `false` | `true`/`false` | |
+| `invert` | `false` | `true` = low when on | |
+| `seq` | empty | switch points `ms:state,…`; state `on`, `off`, `blink`, `flash`, `flicker`, `heartbeat` (see Digital outputs); at most 199 bytes | |
 
 **Pulse accuracy.** The PCA9685's internal oscillator is only accurate to a few percent.
 Measure a pulse with a scope or logic analyzer and set `osc_hz` so the widths come out right.

@@ -140,6 +140,12 @@ void test_calibration_edit_glides_the_pulse() {
     s.trimUs = 20;
     s.maxDps = 0;  // no limit: at once
     TEST_ASSERT_EQUAL_FLOAT(2230, g.pulse(s, 18, 20000));
+    // Seventh review: a degenerate calibration (min_us == max_us) must not stall the glide.
+    s.maxDps = 600;
+    s.maxUs = s.minUs;
+    for (int k = 0; k < 50; ++k) last = g.pulse(s, 18, 20000);  // ~2000 us at >= 6333 us/s
+    TEST_ASSERT_EQUAL_FLOAT(520, last);                          // min_us 500 + trim 20
+    s.maxUs = 2400;
     g.reset();  // powered off and on again: no glide
     s.maxDps = 600;
     s.invert = false;

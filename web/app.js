@@ -311,6 +311,12 @@ function bind(input, path) {
   setInputValue(input, model.get(path));
   input.addEventListener('change', () => {
     let v = input.type === 'checkbox' ? String(input.checked) : input.value.trim();
+    const maxBytes = Number(input.dataset.maxbytes || 0);
+    if (maxBytes && new TextEncoder().encode(v).length > maxBytes) {  // the device counts UTF-8 bytes
+      toast(`At most ${maxBytes} bytes: ä, € and the like take 2–3 each`, true);
+      setInputValue(input, model.get(path));
+      return;
+    }
     if (input.dataset.number !== undefined) v = v.replace(',', '.');  // decimal comma (e.g. German keyboards)
     if (input.type === 'password' && v === '' &&
         !confirm('An empty password makes the WiFi access point open to everyone after the next restart. Continue?')) {
@@ -328,8 +334,9 @@ function setInputValue(input, v) {
   else input.value = v;
 }
 
-function refreshBound(path) {
-  for (const input of bound.get(path) || []) if (document.activeElement !== input) setInputValue(input, model.get(path));
+// force: also the focused field (after a rejected write it must not keep the rejected text).
+function refreshBound(path, force = false) {
+  for (const input of bound.get(path) || []) if (force || document.activeElement !== input) setInputValue(input, model.get(path));
 }
 
 async function setSetting(path, value) {
@@ -337,7 +344,7 @@ async function setSetting(path, value) {
   try {
     r = await send(`$${path}=${value}`);
   } catch (e) {
-    refreshBound(path);
+    refreshBound(path, true);
     return false;
   }
   if (r.ok) {
@@ -347,7 +354,7 @@ async function setSetting(path, value) {
   // Read it back either way: the device's spelling (e.g. "none" for "None", "gpio.5" for
   // "GPIO.5") is what the cards, plots and period computation compare against.
   await send(`$${path}`, { quiet: true }).catch(() => {});
-  refreshBound(path);
+  refreshBound(path, !r.ok);
   onModelChanged(path);
   return r.ok;
 }
@@ -440,7 +447,7 @@ function buildCard(i) {
   runBtn.addEventListener('click', () => {
     send(`${status.stop.has(i) ? '$Servo/Go' : '$Servo/Stop'}=${i}`);
   });
-  const name = bind(el('input', { class: 'name', placeholder: `Servo ${i}`, maxlength: 15 }), sp(i, 'name'));
+  const name = bind(el('input', { class: 'name', placeholder: `Servo ${i}`, maxlength: 15, 'data-maxbytes': 15 }), sp(i, 'name'));
   const enable = bind(el('input', { type: 'checkbox', title: 'Enabled' }), sp(i, 'enable'));
   const pinTag = el('span', { class: 'idx' });
   const stateTag = el('span', { class: 'tag' });
@@ -594,7 +601,7 @@ const SEQ_STATES = ['on', 'off', ...Object.keys(PATTERNS)];
 // separated by commas and/or spaces; a number followed by ':' is a point, not a parameter.
 function parseSeq(text) {
   const rows = [];
-  const re = /(\d+)\s*:\s*([A-Za-z]+|\d+)(?:(?:\s+|\/)(\d+(?:\/\d+)*)(?![\d/]|\s*:))?/g;
+  const re = /(\d+)\s*:\s*([A-Za-z]+|\d+)(?:(?:\s*\/|\s+)(\d+(?:\/\d+)*)(?![\d/]|\s*:))?/g;
   for (const m of (text || '').matchAll(re)) {
     const w = m[2].toLowerCase();
     const st = /^(on|1|high)$/.test(w) ? 'on' : /^(off|0|low)$/.test(w) ? 'off' : w;
@@ -694,7 +701,7 @@ function renderOutputCards() {
 function buildOutputCard(i) {
   const runBtn = el('button', { class: 'run-toggle', title: 'Stop / go this output' });
   runBtn.addEventListener('click', () => send(`${status.ostop.has(i) ? '$Output/Go' : '$Output/Stop'}=${i}`));
-  const name = bind(el('input', { class: 'name', placeholder: `Output ${i}`, maxlength: 15 }), op(i, 'name'));
+  const name = bind(el('input', { class: 'name', placeholder: `Output ${i}`, maxlength: 15, 'data-maxbytes': 15 }), op(i, 'name'));
   const enable = bind(el('input', { type: 'checkbox', title: 'Enabled' }), op(i, 'enable'));
   const lamp = el('span', { class: 'lamp', title: 'Current state' });
   const stateTag = el('span', { class: 'tag' });
@@ -730,16 +737,19 @@ function buildOutputCard(i) {
 
 // Sends the whole sequence and redraws the editor from the device's answer (also when the
 // device rejects it, so the editor never shows points the device does not have).
-async function saveSeq(i, rows) {
+// fromRow is the editor row the change came from (focus often stays in it, e.g. after a
+// select change or Enter).
+async function saveSeq(i, rows, fromRow) {
   rows.sort((a, b) => a.t - b.t);
-  await setSetting(op(i, 'seq'), seqText(rows));
+  const ok = await setSetting(op(i, 'seq'), seqText(rows));
   const card = document.querySelector(`.card[data-output="${i}"]`);
   if (!card) return;
-  // Redraw from the device's answer, unless the user is already typing in another row:
-  // that row is saved on its own change event, which redraws then.
+  // Redraw from the device's answer (sorted, and without a rejected change), unless the
+  // user is already typing in another row: that row is saved on its own change event,
+  // which redraws then. A rejected change is always taken back.
   const a = document.activeElement;
-  const typing = card._refs.seqRows.contains(a) && a.tagName !== 'BUTTON';
-  if (!typing) renderSeqRows(card, i);
+  const typingElsewhere = card._refs.seqRows.contains(a) && a.tagName !== 'BUTTON' && !(fromRow && fromRow.contains(a));
+  if (!ok || !typingElsewhere) renderSeqRows(card, i);
   updateOutputCard(card, i);
 }
 
@@ -751,7 +761,7 @@ function editorRows(card) {
 function renderSeqRows(card, i) {
   const rows = parseSeq(model.get(op(i, 'seq')));
   // Every handler reads the rows at the moment it runs, never a copy from an older render.
-  const commit = (next) => {
+  const commit = (next, fromRow) => {
     if (next.some((r) => !/^\d+$/.test(String(r.t)))) {
       toast('Times must be whole milliseconds', true);
       renderSeqRows(card, i);
@@ -762,7 +772,7 @@ function renderSeqRows(card, i) {
       renderSeqRows(card, i);
       return;
     }
-    saveSeq(i, next.map((r) => ({ t: Number(r.t), s: r.s, p: PATTERNS[r.s] && r.p ? r.p.split('/').map(Number) : [] })));
+    saveSeq(i, next.map((r) => ({ t: Number(r.t), s: r.s, p: PATTERNS[r.s] && r.p ? r.p.split('/').map(Number) : [] })), fromRow);
   };
   card._refs.seqRows.replaceChildren(...rows.map((r) => {
     const t = el('input', { type: 'text', inputmode: 'numeric', value: r.t });
@@ -777,13 +787,13 @@ function renderSeqRows(card, i) {
       if (!pat) par.value = '';
     };
     showPar();
-    t.addEventListener('change', () => commit(editorRows(card)));
+    t.addEventListener('change', () => commit(editorRows(card), row));
     st.addEventListener('change', () => {
       par.value = '';  // a different pattern has different values
       showPar();
-      commit(editorRows(card));
+      commit(editorRows(card), row);
     });
-    par.addEventListener('change', () => commit(editorRows(card)));
+    par.addEventListener('change', () => commit(editorRows(card), row));
     const del = el('button', { title: 'Remove this point' }, '✕');
     const row = el('div', { class: 'seq-row' }, t, st, par, del);
     del.addEventListener('click', () => commit(editorRows(card).filter((_, j) => j !== [...card._refs.seqRows.children].indexOf(row))));
