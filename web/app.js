@@ -447,7 +447,7 @@ function buildCard(i) {
   runBtn.addEventListener('click', () => {
     send(`${status.stop.has(i) ? '$Servo/Go' : '$Servo/Stop'}=${i}`);
   });
-  const name = bind(el('input', { class: 'name', placeholder: `Servo ${i}`, maxlength: 15, 'data-maxbytes': 15 }), sp(i, 'name'));
+  const name = bind(el('input', { class: 'name', placeholder: `Servo ${i}`, maxlength: 31, 'data-maxbytes': 31 }), sp(i, 'name'));
   const enable = bind(el('input', { type: 'checkbox', title: 'Enabled' }), sp(i, 'enable'));
   const pinTag = el('span', { class: 'idx' });
   const stateTag = el('span', { class: 'tag' });
@@ -701,7 +701,7 @@ function renderOutputCards() {
 function buildOutputCard(i) {
   const runBtn = el('button', { class: 'run-toggle', title: 'Stop / go this output' });
   runBtn.addEventListener('click', () => send(`${status.ostop.has(i) ? '$Output/Go' : '$Output/Stop'}=${i}`));
-  const name = bind(el('input', { class: 'name', placeholder: `Output ${i}`, maxlength: 15, 'data-maxbytes': 15 }), op(i, 'name'));
+  const name = bind(el('input', { class: 'name', placeholder: `Output ${i}`, maxlength: 31, 'data-maxbytes': 31 }), op(i, 'name'));
   const enable = bind(el('input', { type: 'checkbox', title: 'Enabled' }), op(i, 'enable'));
   const lamp = el('span', { class: 'lamp', title: 'Current state' });
   const stateTag = el('span', { class: 'tag' });
@@ -905,6 +905,11 @@ function renderTimeline() {
   const ns = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(ns, 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const svgTitle = (text) => {  // tooltip with the full name (labels are cut short)
+    const t = document.createElementNS(ns, 'title');
+    t.textContent = text;
+    return t;
+  };
   const add = (tag, attrs, text) => {
     const e = document.createElementNS(ns, tag);
     for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
@@ -922,7 +927,7 @@ function renderTimeline() {
     const s = servoParams(i);
     const y = top + row * rowH;
     const g = status.stop.has(i) ? 'stopped' : '';
-    add('text', { x: 4, y: y + 15 }, servoName(i).slice(0, W < 600 ? 10 : 16));
+    add('text', { x: 4, y: y + 15 }, servoName(i).slice(0, W < 600 ? 10 : 16)).append(svgTitle(servoName(i)));
     add('rect', { x: label, y: y + 3, width: W - label - 6, height: rowH - 6, class: `track ${g}` });
     // Bars in absolute scene time, clipped to the window [w0, w0 + period).
     const bar = (t0, t1, cls) => {
@@ -952,7 +957,7 @@ function renderTimeline() {
   oidx.forEach((i, k) => {
     const y = top + (idx.length + 1 + k) * rowH;
     const g = status.ostop.has(i) ? 'stopped' : '';
-    add('text', { x: 4, y: y + 15 }, outputName(i).slice(0, W < 600 ? 10 : 16));
+    add('text', { x: 4, y: y + 15 }, outputName(i).slice(0, W < 600 ? 10 : 16)).append(svgTitle(outputName(i)));
     add('rect', { x: label, y: y + 3, width: W - label - 6, height: rowH - 6, class: `track ${g}` });
     const bar = (t0, t1, dense) => {
       const a = Math.max(t0, 0), b = Math.min(t1, period);

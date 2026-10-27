@@ -156,6 +156,9 @@ void test_text_must_be_utf8_without_control_characters() {
     TEST_ASSERT_EQUAL_STRING("error:2", exec("$AP/SSID=\xC0\xAF").last().c_str());  // overlong '/'
     TEST_ASSERT_EQUAL_STRING("ok", exec("$/servo/0/name=B\xC3\xA4r \xE2\x82\xAC").last().c_str());  // "Bär €"
     TEST_ASSERT_EQUAL_STRING("B\xC3\xA4r \xE2\x82\xAC", cfg.servo[0].name);
+    // Names take up to 31 bytes: "Kerzen Küche links oben 123456" is 31 bytes (30 characters).
+    TEST_ASSERT_EQUAL_STRING("ok", exec("$/out/0/name=Kerzen K\xC3\xBC" "che links oben 123456").last().c_str());
+    TEST_ASSERT_EQUAL_STRING("error:4", exec("$/out/0/name=Kerzen K\xC3\xBC" "che links oben 1234567").last().c_str());
     std::string s = "ok \xE4 \xF0\x9F\x98\x80 \xED\xA0\x80";  // Latin-1, emoji, surrogate
     makeValidUtf8(s);
     TEST_ASSERT_EQUAL_STRING("ok ? \xF0\x9F\x98\x80 ???", s.c_str());

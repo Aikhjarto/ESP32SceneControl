@@ -36,7 +36,7 @@ enum class Mode : uint8_t { Once, Return, PingPong, Count };
 enum class Driver : uint8_t { Auto, Ledc, Mcpwm, Count };
 
 struct ServoConfig {
-    char name[16];
+    char name[32];
     PinSpec pin;
     Driver driver;
     bool enable;
@@ -100,7 +100,7 @@ struct NetConfig {
 
 // Digital output: switches on/off at the points of its sequence, every scene cycle.
 struct OutputConfig {
-    char name[16];
+    char name[32];
     PinSpec pin;   // gpio.N or pcf.B.C
     bool enable;
     bool invert;   // output level low when "on" (active-low LEDs, relay boards)

@@ -68,7 +68,9 @@ settings survive.
     wrap state (`sequenceState` and `seqState` in app.js).
 - **Storage:** an NVS blob of only the non-default settings, as `$path=value` lines,
   replayed through the parser at boot. A restore is validated in a scratch Config first.
-  - The worst case is about 49 KB, hence the 128 KB NVS partition and the 64 KB upload limit.
+  - The worst case is about 53 KB (31-byte names, 199-byte sequences everywhere), hence the
+    128 KB NVS partition (old and new copy while saving: ~26 of 31 usable pages) and the
+    64 KB upload limit. Re-measure when adding settings or making fields longer.
 - **Text settings** (names, SSID, ...) must be UTF-8 without control characters, and every
   WebSocket text frame is made valid UTF-8, or the browser drops the connection.
 - **Calibration edits** on a powered servo glide the pulse at `max_dps` (`PulseGlide`).

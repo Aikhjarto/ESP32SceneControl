@@ -26,7 +26,7 @@ namespace ss::net {
 static const char* TAG = "web";
 
 constexpr size_t kMaxWsFrame = 4096;
-constexpr size_t kMaxConfigUpload = 65536;  // the largest possible saved config is ~50 KB
+constexpr size_t kMaxConfigUpload = 65536;  // the largest possible saved config is ~53 KB
 constexpr int kStatusPeriodMs = 200;
 
 static httpd_handle_t gServer;

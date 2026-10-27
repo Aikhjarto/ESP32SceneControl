@@ -247,7 +247,7 @@ Paths are case-insensitive. "R" means the change applies after a restart (`$Bye`
 
 | Field | Default | Range / values | |
 |---|---|---|---|
-| `name` | empty | up to 15 bytes of UTF-8 (ä, € etc. take 2–3) | |
+| `name` | empty | up to 31 bytes of UTF-8 (ä, € etc. take 2–3) | |
 | `pin` | see Hardware | `none`, `gpio.N`, `pca.<board>.<channel>` | R |
 | `driver` | `auto` | `auto`, `ledc`, `mcpwm` (on-chip block for GPIO servos) | R |
 | `enable` | `true` | `true`/`false` | |
@@ -290,7 +290,7 @@ glides its pulse to the new calibration at `max_dps` instead of jumping.
 
 | Field | Default | Range / values | |
 |---|---|---|---|
-| `name` | empty | up to 15 bytes of UTF-8 (ä, € etc. take 2–3) | |
+| `name` | empty | up to 31 bytes of UTF-8 (ä, € etc. take 2–3) | |
 | `pin` | `none` | `none`, `gpio.N`, `pcf.<board>.<bit>` | R |
 | `enable` | `false` | `true`/`false` | |
 | `invert` | `false` | `true` = low when on | |
@@ -311,7 +311,7 @@ At boot they are replayed through the same parser, and any line that fails is re
 by `$I`. `GET /config.txt` downloads this text and `POST /config.txt` restores it
 (Settings → Backup in the UI). A restore starts from the defaults, so the result is exactly
 the backed-up configuration. Press Save afterwards to keep it. Even with every setting changed
-the saved text stays around 50 KB; it lives in a 128 KB NVS partition, which leaves room for
+the saved text stays below 53 KB; it lives in a 128 KB NVS partition, which leaves room for
 the old and the new copy while saving.
 
 ## Project layout
